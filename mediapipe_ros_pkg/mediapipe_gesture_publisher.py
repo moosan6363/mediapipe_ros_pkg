@@ -5,23 +5,38 @@ from pathlib import Path
 import cv2
 import mediapipe as mp
 import numpy as np
+import rclpy
 from cv_bridge import CvBridge
-from filterpy.common import Q_discrete_white_noise
-from filterpy.kalman import KalmanFilter
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from pyrealsense2 import intrinsics, rs2_deproject_pixel_to_point
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from sklearn.decomposition import PCA
 
+from mediapipe_ros_pkg.kalman_filter import KalmanFilter
+from mediapipe_ros_pkg.realsense import estimate_object_points
+from mediapipe_ros_pkg.realsense_subscriber import RealsenseSubsctiber
 
-class MediaPipePublisher(Node):
+
+def main(args=None):
+    rclpy.init(args=args)
+
+    mediapipe_gesture_publisher = MediapipeGesturePublisher()
+    realsense_subscriber = RealsenseSubsctiber(mediapipe_gesture_publisher.forward)
+
+    rclpy.spin(realsense_subscriber)
+
+    realsense_subscriber.destroy_node()
+    mediapipe_gesture_publisher.destroy_node()
+    rclpy.shutdown()
+
+
+class MediapipeGesturePublisher(Node):
     def __init__(self):
         super().__init__("mediapipe_gesture_publisher")
         self.gesture_image_publisher = self.create_publisher(
-            Image, "/mediapipe_gesture", 10
+            Image, "/mediapipe/gesture/annotated_image", 10
         )
 
         # TODO: Fix hard code
@@ -50,45 +65,22 @@ class MediaPipePublisher(Node):
             self.mp_hands.HandLandmark.INDEX_FINGER_TIP,
         ]
 
-        self.kalman_filter_config()
-        self.msg_timestamp = None
-
-    def kalman_filter_config(self):
-        dim_x = 6
-        dim_z = 3
-
-        kf = KalmanFilter(dim_x=dim_x, dim_z=dim_z)
-
-        # Measurement function
-        kf.H = np.array(
-            [
-                [1, 0, 0, 0, 0, 0],
-                [0, 1, 0, 0, 0, 0],
-                [0, 0, 1, 0, 0, 0],
-            ],
-        )
-
-        # Measurement noise covariance
-        kf.R = np.eye(dim_z) * 0.05
-
-        self.kf_dict = {
-            landmark_idx: deepcopy(kf) for landmark_idx in self.exposed_landmarks
-        }
-
-        self.kalman_filter_init()
-
-    def kalman_filter_init(self):
-        for key, kf in self.kf_dict.items():
-            # Initial state covariance
-            kf.P = np.eye(kf.dim_x) * 1.0
-
-            # Initial state
-            kf.x = np.zeros(kf.dim_x)
-
-    def kalman_filter_update(self, object_points_dict, dt):
-        for key, kf in self.kf_dict.items():
-            # State transition matrix
-            kf.F = np.array(
+        self.kalman_filter = KalmanFilter(
+            dim_x=6,
+            dim_z=3,
+            h=np.array(
+                [
+                    [1, 0, 0, 0, 0, 0],
+                    [0, 1, 0, 0, 0, 0],
+                    [0, 0, 1, 0, 0, 0],
+                ],
+                dtype=self.dtype,
+            ),
+            x_0=np.zeros(6),
+            p=np.eye(6) * 1.0,
+            r=np.eye(3) * 0.05,
+            q_var=1.0,
+            f_func=lambda dt: np.array(
                 [
                     [1, 0, 0, dt, 0, 0],
                     [0, 1, 0, 0, dt, 0],
@@ -98,30 +90,14 @@ class MediaPipePublisher(Node):
                     [0, 0, 0, 0, 0, 1],
                 ],
                 dtype=self.dtype,
-            )
+            ),
+            verbose=True,
+        )
 
-            # Process noise covariance
-            kf.Q = Q_discrete_white_noise(
-                dim=kf.dim_x / kf.dim_z, dt=dt, block_size=kf.dim_z, var=1.0
-            )
-
-            kf.predict()
-            z = object_points_dict[key]
-            if z is not None:
-                y = z - kf.H @ kf.x
-                S = kf.H @ kf.P @ kf.H.T + kf.R
-                d_M2 = y.T @ np.linalg.inv(S) @ y
-                # Mahalanobis distance threshold
-                if d_M2 < 9.21:
-                    kf.update(z)
-                else:
-                    print(f"Mahalanobis distance threshold: {d_M2}")
-
-    def get_state(self):
-        object_points_dict = {}
-        for key, kf in self.kf_dict.items():
-            object_points_dict[key] = kf.H @ kf.x
-        return object_points_dict
+        self.kf_dict = {
+            landmark_idx: deepcopy(self.kalman_filter)
+            for landmark_idx in self.exposed_landmarks
+        }
 
     def forward(self, rgbd_msg):
         rgb_image_msg = rgbd_msg.rgb
@@ -185,25 +161,28 @@ class MediaPipePublisher(Node):
                 and 0 <= hand_landmarks_proto.landmark[landmark_idx].y <= 1
             ):
                 image_points_dict[landmark_idx] = (
-                    hand_landmarks_proto.landmark[landmark_idx].x
-                    * (rgb_image.shape[1] - 1),
-                    hand_landmarks_proto.landmark[landmark_idx].y
-                    * (rgb_image.shape[0] - 1),
+                    int(
+                        hand_landmarks_proto.landmark[landmark_idx].x
+                        * (rgb_image.shape[1] - 1)
+                    ),
+                    int(
+                        hand_landmarks_proto.landmark[landmark_idx].y
+                        * (rgb_image.shape[0] - 1)
+                    ),
                 )
             else:
                 image_points_dict[landmark_idx] = None
 
-        # Time stamp update
-        if self.msg_timestamp is None or msg_timestamp - self.msg_timestamp > 1.0:
-            self.kalman_filter_init()
-            dt = 0.0
-        else:
-            dt = msg_timestamp - self.msg_timestamp
-        self.msg_timestamp = msg_timestamp
+        previous_object_points_dict = {
+            key: kf.z_hat for key, kf in self.kf_dict.items()
+        }
 
         # Estimate 3D coordinates
-        object_points_dict = self.estimate_3d_coordinates(
-            image_points_dict, depth_image, depth_camera_info
+        object_points_dict = estimate_object_points(
+            image_points_dict,
+            previous_object_points_dict,
+            depth_image,
+            depth_camera_info,
         )
 
         self.visualize_line(
@@ -215,8 +194,10 @@ class MediaPipePublisher(Node):
         )
 
         # Apply Kalman filter
-        self.kalman_filter_update(object_points_dict, dt)
-        object_points_dict = self.get_state()
+        for key, kf in self.kf_dict.items():
+            kf.update(msg_timestamp, object_points_dict[key])
+            object_points_dict[key] = kf.z_hat
+
         self.visualize_line(
             rgb_image,
             rgb_camera_info,
@@ -224,57 +205,6 @@ class MediaPipePublisher(Node):
             object_points_dict,
             (0, 0, 255),
         )
-
-    def estimate_3d_coordinates(self, image_points, depth_image, depth_camera_info):
-        hand_landmarks_3d = {}
-        _intrinsics = intrinsics()
-        _intrinsics.width = depth_camera_info.width
-        _intrinsics.height = depth_camera_info.height
-        _intrinsics.fx = depth_camera_info.k[0]
-        _intrinsics.fy = depth_camera_info.k[4]
-        _intrinsics.ppx = depth_camera_info.k[2]
-        _intrinsics.ppy = depth_camera_info.k[5]
-
-        for key, value in image_points.items():
-            if value is None:
-                hand_landmarks_3d[key] = None
-                continue
-            else:
-                pixel = [int(value[0]), int(value[1])]
-
-                depth_value = self.get_state()[key][2]
-                if depth_value > 0:
-                    # Inverse proportion with depth value
-                    # TODO: Fix hard code
-                    crop_size = max(1, int(30 / depth_value))
-                else:
-                    crop_size = 1
-
-                half_crop_size = crop_size // 2
-                cropped_depth = depth_image[
-                    max(0, pixel[1] - half_crop_size) : min(
-                        depth_image.shape[0] - 1, pixel[1] + half_crop_size + 1
-                    ),
-                    max(0, pixel[0] - half_crop_size) : min(
-                        depth_image.shape[1] - 1, pixel[0] + half_crop_size + 1
-                    ),
-                ]
-
-                # Filter out invalid depth values
-                valid_depths = cropped_depth[cropped_depth > 0]
-
-                # Crop around the pixel and get the depth value using the nearest 12.5% of the depth value
-                # TODO: Fix hard code
-                if valid_depths.size > 0:
-                    depth = np.percentile(valid_depths, 12.5)
-                    point_3d = rs2_deproject_pixel_to_point(
-                        _intrinsics, pixel, depth * 0.001
-                    )
-                    hand_landmarks_3d[key] = point_3d
-                else:
-                    hand_landmarks_3d[key] = None
-
-        return hand_landmarks_3d
 
     def pca(self, data):
         pca = PCA(n_components=1)
@@ -321,6 +251,7 @@ class MediaPipePublisher(Node):
             )
         except cv2.error:
             retval = False
+            print("cv2.solvePnP failed")
 
         if retval:
             direction_vector, mean = self.pca(object_points)

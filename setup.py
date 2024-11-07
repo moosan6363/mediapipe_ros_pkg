@@ -14,10 +14,13 @@ setup(
     zip_safe=True,
     maintainer="Naoki Nomura",
     maintainer_email="naoki.nomura1221@gmail.com",
-    description="Mediapipe Ros2 Project.",
+    description="Mediapipe ROS2 Project.",
     license="MIT",
     tests_require=["pytest"],
     entry_points={
-        "console_scripts": ["mediapipe_node = mediapipe_ros_pkg.mediapipe_node:main"],
+        "console_scripts": [
+            "mediapipe_gesture_publisher = mediapipe_ros_pkg.mediapipe_gesture_publisher:main",
+            "mediapipe_objectron_publisher = mediapipe_ros_pkg.mediapipe_objectron_publisher:main",
+        ],
     },
 )
