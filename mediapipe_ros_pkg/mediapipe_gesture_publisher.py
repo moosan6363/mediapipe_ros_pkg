@@ -24,7 +24,7 @@ def main(args=None):
     rclpy.init(args=args)
 
     mediapipe_gesture_publisher = MediapipeGesturePublisher()
-    realsense_subscriber = RealsenseSubsctiber(mediapipe_gesture_publisher.forward)
+    realsense_subscriber = RealsenseSubsctiber(mediapipe_gesture_publisher.callback)
 
     rclpy.spin(realsense_subscriber)
 
@@ -105,7 +105,7 @@ class MediapipeGesturePublisher(Node):
 
         self.pca = PCA(n_components=1)
 
-    def forward(self, rgbd_msg):
+    def callback(self, rgbd_msg):
         rgb_image_msg = rgbd_msg.rgb
         mp_image = mp.Image(
             image_format=mp.ImageFormat.SRGB,

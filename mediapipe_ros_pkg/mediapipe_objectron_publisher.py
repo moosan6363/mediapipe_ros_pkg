@@ -1,7 +1,7 @@
 import mediapipe as mp
 import rclpy
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point32, Polygon, PolygonStamped
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 
@@ -13,7 +13,7 @@ def main(args=None):
     rclpy.init(args=args)
 
     mediapipe_objectron_publisher = MediaPipeObjectronPublisher()
-    realsense_subscriber = RealsenseSubsctiber(mediapipe_objectron_publisher.forward)
+    realsense_subscriber = RealsenseSubsctiber(mediapipe_objectron_publisher.callback)
 
     rclpy.spin(realsense_subscriber)
 
@@ -28,8 +28,8 @@ class MediaPipeObjectronPublisher(Node):
         self.objectron_image_publisher = self.create_publisher(
             Image, "/mediapipe/objectron/annotated_image", 10
         )
-        self.objectron_coordinates_publisher = self.create_publisher(
-            Point, "/mediapipe/objectron/coordinates", 10
+        self.objectron_objects_publisher = self.create_publisher(
+            PolygonStamped, "/mediapipe/objectron/objects", 10
         )
 
         self.mp_drawing = mp.solutions.drawing_utils
@@ -37,11 +37,11 @@ class MediaPipeObjectronPublisher(Node):
         self.bridge = CvBridge()
         self.CUP_CENTER_IDX = 0
 
-    def forward(self, rgbd_msg):
+    def callback(self, rgbd_msg):
         with self.mp_objectron.Objectron(
             static_image_mode=False,
             max_num_objects=5,
-            min_detection_confidence=0.2,
+            min_detection_confidence=0.1,
             min_tracking_confidence=0.99,
             model_name="Cup",
             focal_length=(rgbd_msg.rgb_camera_info.k[0], rgbd_msg.rgb_camera_info.k[4]),
@@ -61,6 +61,7 @@ class MediaPipeObjectronPublisher(Node):
             # Draw box landmarks.
             annotated_image = image.copy()
             if results.detected_objects:
+                points = []
                 for detected_object in results.detected_objects:
                     self.mp_drawing.draw_landmarks(
                         annotated_image,
@@ -98,13 +99,18 @@ class MediaPipeObjectronPublisher(Node):
                         rgbd_msg.depth_camera_info,
                     )
 
-                    self.objectron_coordinates_publisher.publish(
-                        Point(
+                    points.append(
+                        Point32(
                             x=object_points[self.CUP_CENTER_IDX][0],
                             y=object_points[self.CUP_CENTER_IDX][1],
                             z=object_points[self.CUP_CENTER_IDX][2],
                         )
                     )
+                self.objectron_objects_publisher.publish(
+                    PolygonStamped(
+                        header=rgb_image_msg.header, polygon=Polygon(points=points)
+                    )
+                )
 
             self.objectron_image_publisher.publish(
                 self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
