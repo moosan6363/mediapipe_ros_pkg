@@ -7,6 +7,7 @@ import mediapipe as mp
 import numpy as np
 import rclpy
 from cv_bridge import CvBridge
+from geometry_msgs.msg import Point, Pose, PoseArray, Quaternion
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -37,6 +38,9 @@ class MediapipeGesturePublisher(Node):
         super().__init__("mediapipe_gesture_publisher")
         self.gesture_image_publisher = self.create_publisher(
             Image, "/mediapipe/gesture/annotated_image", 10
+        )
+        self.pointing_vector_publisher = self.create_publisher(
+            PoseArray, "/mediapipe/gesture/pointing_vector", 10
         )
 
         # TODO: Fix hard code
@@ -99,6 +103,8 @@ class MediapipeGesturePublisher(Node):
             for landmark_idx in self.exposed_landmarks
         }
 
+        self.pca = PCA(n_components=1)
+
     def forward(self, rgbd_msg):
         rgb_image_msg = rgbd_msg.rgb
         mp_image = mp.Image(
@@ -112,6 +118,7 @@ class MediapipeGesturePublisher(Node):
             recognition_result = self.recognizer.recognize(mp_image)
 
         annotated_image = mp_image.numpy_view().copy()
+        poses = []
 
         for hand_landmarks in recognition_result.hand_landmarks:
             hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
@@ -132,7 +139,7 @@ class MediapipeGesturePublisher(Node):
                 self.mp_drawing_styles.get_default_hand_connections_style(),
             )
 
-            self.pointing_vector_estimation(
+            pose = self.pointing_vector_estimation(
                 annotated_image,
                 self.bridge.imgmsg_to_cv2(rgbd_msg.depth, "passthrough"),
                 rgbd_msg.rgb_camera_info,
@@ -140,10 +147,19 @@ class MediapipeGesturePublisher(Node):
                 float(rgbd_msg.header.stamp.sec + rgbd_msg.header.stamp.nanosec * 1e-9),
                 hand_landmarks_proto,
             )
+            if pose is not None:
+                poses.append(pose)
 
         self.gesture_image_publisher.publish(
             self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
         )
+
+        if len(poses) > 0:
+            pose_array = PoseArray(
+                header=rgbd_msg.header,
+                poses=poses,
+            )
+            self.pointing_vector_publisher.publish(pose_array)
 
     def pointing_vector_estimation(
         self,
@@ -185,32 +201,92 @@ class MediapipeGesturePublisher(Node):
             depth_camera_info,
         )
 
-        self.visualize_line(
-            rgb_image,
-            rgb_camera_info,
-            image_points_dict,
-            object_points_dict,
-            (0, 0, 0),
-        )
+        # without Kalman filter
+        pose = self.caluculate_pose(object_points_dict)
+        if pose is not None:
+            orientation_euler, position = pose
+            self.visualize_line(
+                rgb_image,
+                rgb_camera_info,
+                image_points_dict,
+                object_points_dict,
+                orientation_euler,
+                position,
+                (0, 0, 0),
+            )
 
         # Apply Kalman filter
         for key, kf in self.kf_dict.items():
             kf.update(msg_timestamp, object_points_dict[key])
             object_points_dict[key] = kf.z_hat
 
-        self.visualize_line(
-            rgb_image,
-            rgb_camera_info,
-            image_points_dict,
-            object_points_dict,
-            (0, 0, 255),
+        pose = self.caluculate_pose(object_points_dict)
+        if pose is not None:
+            orientation_euler, position = pose
+            orinetation_quaternion = Quaternion(
+                x=float(orientation_euler[0]),
+                y=float(orientation_euler[1]),
+                z=float(orientation_euler[2]),
+                w=0.0,
+            )
+            position_point = Point(
+                x=float(position[0]),
+                y=float(position[1]),
+                z=float(position[2]),
+            )
+            pose = Pose(
+                position=position_point,
+                orientation=orinetation_quaternion,
+            )
+
+            self.visualize_line(
+                rgb_image,
+                rgb_camera_info,
+                image_points_dict,
+                object_points_dict,
+                orientation_euler,
+                position,
+                (0, 0, 255),
+            )
+            return pose
+        else:
+            return None
+
+    def caluculate_pose(
+        self,
+        object_points_dict,
+    ):
+        object_points = np.array(
+            [
+                object_points
+                for object_points in object_points_dict.values()
+                if object_points is not None
+            ],
+            dtype=self.dtype,
         )
+        if len(object_points) >= 4:
+            self.pca.fit(object_points)
+            orientation_euler = self.pca.components_[0]
+            position = self.pca.mean_
 
-    def pca(self, data):
-        pca = PCA(n_components=1)
-        pca.fit(data)
+            position_to_tip = (
+                object_points_dict[self.mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                - position
+            )
 
-        return pca.components_[0], pca.mean_
+            if (
+                np.linalg.norm(position_to_tip) != 0
+                and np.linalg.norm(orientation_euler) != 0
+            ):
+                cos_theta = np.dot(position_to_tip, orientation_euler) / (
+                    np.linalg.norm(position_to_tip) * np.linalg.norm(orientation_euler)
+                )
+                if cos_theta < 0:
+                    orientation_euler = -orientation_euler
+
+                return orientation_euler / np.linalg.norm(orientation_euler), position
+        else:
+            return None
 
     def visualize_line(
         self,
@@ -218,6 +294,8 @@ class MediapipeGesturePublisher(Node):
         rgb_camera_info,
         image_points_dict,
         object_points_dict,
+        orientation_euler,
+        position,
         color,
     ):
         image_points = np.array(
@@ -254,14 +332,12 @@ class MediapipeGesturePublisher(Node):
             print("cv2.solvePnP failed")
 
         if retval:
-            direction_vector, mean = self.pca(object_points)
-
             # 0.3m away from the mean point
-            start_object_point = mean + direction_vector * 0.3
-            end_object_point = mean - direction_vector * 0.3
+            start_object_point = position
+            end_object_point = position + orientation_euler * 0.4
 
             # set start point self.mp_hands.HandLandmark.INDEX_FINGER_TIP
-            start_point, _ = cv2.projectPoints(
+            start_image_point, _ = cv2.projectPoints(
                 start_object_point,
                 rvec,
                 tvec,
@@ -269,17 +345,22 @@ class MediapipeGesturePublisher(Node):
                 d,
             )
 
-            end_point, _ = cv2.projectPoints(end_object_point, rvec, tvec, k, d)
+            end_image_point, _ = cv2.projectPoints(end_object_point, rvec, tvec, k, d)
 
             self.write_poining_vector(
-                rgb_image, start_point[0][0], end_point[0][0], color
+                rgb_image, start_image_point[0][0], end_image_point[0][0], color
             )
 
-    def write_poining_vector(self, image, start_point, end_point, color):
-        cv2.line(
-            image,
-            (int(start_point[0]), int(start_point[1])),
-            (int(end_point[0]), int(end_point[1])),
-            color,
-            3,
-        )
+    def write_poining_vector(
+        self, rgb_image, start_image_point, end_image_point, color
+    ):
+        try:
+            cv2.line(
+                rgb_image,
+                (int(start_image_point[0]), int(start_image_point[1])),
+                (int(end_image_point[0]), int(end_image_point[1])),
+                color,
+                3,
+            )
+        except cv2.error:
+            pass
