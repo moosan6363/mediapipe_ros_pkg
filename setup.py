@@ -21,6 +21,7 @@ setup(
         "console_scripts": [
             "mediapipe_gesture_publisher = mediapipe_ros_pkg.mediapipe_gesture_publisher:main",
             "mediapipe_objectron_publisher = mediapipe_ros_pkg.mediapipe_objectron_publisher:main",
+            "gesture_objectron_integrate_publisher = mediapipe_ros_pkg.gesture_objectron_integrate_publisher:main",
         ],
     },
 )
