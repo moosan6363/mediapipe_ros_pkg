@@ -6,34 +6,37 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import rclpy
+import rclpy.logging
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point, Pose, PoseArray, Quaternion
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
-from rclpy.node import Node
 from sensor_msgs.msg import Image
 from sklearn.decomposition import PCA
+from std_msgs.msg import Header
+from tf2_geometry_msgs import tf2_geometry_msgs
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
 
 from mediapipe_ros_pkg.kalman_filter import KalmanFilter
-from mediapipe_ros_pkg.realsense import estimate_object_points
-from mediapipe_ros_pkg.realsense_subscriber import RealsenseSubsctiber
+from mediapipe_ros_pkg.realsense_subscriber import (
+    RealsenseSubsctiber,
+    estimate_object_points,
+)
+from mediapipe_ros_pkg.util import direction_vector_to_quaternion
 
 
 def main(args=None):
     rclpy.init(args=args)
-
     mediapipe_gesture_publisher = MediapipeGesturePublisher()
-    realsense_subscriber = RealsenseSubsctiber(mediapipe_gesture_publisher.callback)
-
-    rclpy.spin(realsense_subscriber)
-
-    realsense_subscriber.destroy_node()
-    mediapipe_gesture_publisher.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(mediapipe_gesture_publisher)
+    except KeyboardInterrupt:
+        mediapipe_gesture_publisher.destroy_node()
 
 
-class MediapipeGesturePublisher(Node):
+class MediapipeGesturePublisher(RealsenseSubsctiber):
     def __init__(self):
         super().__init__("mediapipe_gesture_publisher")
         self.gesture_image_publisher = self.create_publisher(
@@ -42,6 +45,11 @@ class MediapipeGesturePublisher(Node):
         self.pointing_vector_publisher = self.create_publisher(
             PoseArray, "/mediapipe/gesture/pointing_vector", 10
         )
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.source_frame_rel = "camera_color_optical_frame"
+        self.target_frame_rel = "camera_color_frame"
 
         # TODO: Fix hard code
         mediapipe_model_path = Path(
@@ -62,7 +70,7 @@ class MediapipeGesturePublisher(Node):
 
         self.bridge = CvBridge()
 
-        self.exposed_landmarks = [
+        self.index_landmarks = [
             self.mp_hands.HandLandmark.INDEX_FINGER_MCP,
             self.mp_hands.HandLandmark.INDEX_FINGER_PIP,
             self.mp_hands.HandLandmark.INDEX_FINGER_DIP,
@@ -100,7 +108,7 @@ class MediapipeGesturePublisher(Node):
 
         self.kf_dict = {
             landmark_idx: deepcopy(self.kalman_filter)
-            for landmark_idx in self.exposed_landmarks
+            for landmark_idx in self.index_landmarks
         }
 
         self.pca = PCA(n_components=1)
@@ -156,10 +164,15 @@ class MediapipeGesturePublisher(Node):
 
         if len(poses) > 0:
             pose_array = PoseArray(
-                header=rgbd_msg.header,
+                header=Header(
+                    stamp=rgbd_msg.header.stamp,
+                    frame_id=self.target_frame_rel,
+                ),
                 poses=poses,
             )
             self.pointing_vector_publisher.publish(pose_array)
+
+        return
 
     def pointing_vector_estimation(
         self,
@@ -171,7 +184,7 @@ class MediapipeGesturePublisher(Node):
         hand_landmarks_proto,
     ):
         image_points_dict = {}
-        for landmark_idx in self.exposed_landmarks:
+        for landmark_idx in self.index_landmarks:
             if (
                 0 <= hand_landmarks_proto.landmark[landmark_idx].x <= 1
                 and 0 <= hand_landmarks_proto.landmark[landmark_idx].y <= 1
@@ -204,13 +217,13 @@ class MediapipeGesturePublisher(Node):
         # without Kalman filter
         pose = self.caluculate_pose(object_points_dict)
         if pose is not None:
-            orientation_euler, position = pose
+            direction_vector, position = pose
             self.visualize_line(
                 rgb_image,
                 rgb_camera_info,
                 image_points_dict,
                 object_points_dict,
-                orientation_euler,
+                direction_vector,
                 position,
                 (0, 0, 0),
             )
@@ -222,12 +235,19 @@ class MediapipeGesturePublisher(Node):
 
         pose = self.caluculate_pose(object_points_dict)
         if pose is not None:
-            orientation_euler, position = pose
-            orinetation_quaternion = Quaternion(
-                x=float(orientation_euler[0]),
-                y=float(orientation_euler[1]),
-                z=float(orientation_euler[2]),
-                w=0.0,
+            direction_vector, position = pose
+            self.visualize_line(
+                rgb_image,
+                rgb_camera_info,
+                image_points_dict,
+                object_points_dict,
+                direction_vector,
+                position,
+                (0, 0, 255),
+            )
+            orientation = direction_vector_to_quaternion(direction_vector)
+            orientation = Quaternion(
+                x=orientation[0], y=orientation[1], z=orientation[2], w=orientation[3]
             )
             position_point = Point(
                 x=float(position[0]),
@@ -236,18 +256,21 @@ class MediapipeGesturePublisher(Node):
             )
             pose = Pose(
                 position=position_point,
-                orientation=orinetation_quaternion,
+                orientation=orientation,
             )
 
-            self.visualize_line(
-                rgb_image,
-                rgb_camera_info,
-                image_points_dict,
-                object_points_dict,
-                orientation_euler,
-                position,
-                (0, 0, 255),
-            )
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.target_frame_rel,
+                    self.source_frame_rel,
+                    rclpy.time.Time(),
+                    timeout=rclpy.time.Duration(seconds=1),
+                )
+            except Exception as e:
+                print(e)
+                return
+            pose = tf2_geometry_msgs.do_transform_pose(pose, transform)
+
             return pose
         else:
             return None
@@ -266,7 +289,7 @@ class MediapipeGesturePublisher(Node):
         )
         if len(object_points) >= 4:
             self.pca.fit(object_points)
-            orientation_euler = self.pca.components_[0]
+            direction_vector = self.pca.components_[0]
             position = self.pca.mean_
 
             position_to_tip = (
@@ -276,15 +299,15 @@ class MediapipeGesturePublisher(Node):
 
             if (
                 np.linalg.norm(position_to_tip) != 0
-                and np.linalg.norm(orientation_euler) != 0
+                and np.linalg.norm(direction_vector) != 0
             ):
-                cos_theta = np.dot(position_to_tip, orientation_euler) / (
-                    np.linalg.norm(position_to_tip) * np.linalg.norm(orientation_euler)
+                cos_theta = np.dot(position_to_tip, direction_vector) / (
+                    np.linalg.norm(position_to_tip) * np.linalg.norm(direction_vector)
                 )
                 if cos_theta < 0:
-                    orientation_euler = -orientation_euler
+                    direction_vector = -direction_vector
 
-                return orientation_euler / np.linalg.norm(orientation_euler), position
+                return direction_vector / np.linalg.norm(direction_vector), position
         else:
             return None
 
@@ -294,7 +317,7 @@ class MediapipeGesturePublisher(Node):
         rgb_camera_info,
         image_points_dict,
         object_points_dict,
-        orientation_euler,
+        direction_vector,
         position,
         color,
     ):
@@ -332,11 +355,9 @@ class MediapipeGesturePublisher(Node):
             print("cv2.solvePnP failed")
 
         if retval:
-            # 0.3m away from the mean point
             start_object_point = position
-            end_object_point = position + orientation_euler * 0.4
+            end_object_point = position + direction_vector * 0.4
 
-            # set start point self.mp_hands.HandLandmark.INDEX_FINGER_TIP
             start_image_point, _ = cv2.projectPoints(
                 start_object_point,
                 rvec,
