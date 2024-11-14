@@ -1,36 +1,49 @@
 import mediapipe as mp
 import rclpy
+import tf2_geometry_msgs
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Point32, Polygon, PolygonStamped
-from rclpy.node import Node
+from geometry_msgs.msg import (
+    Point,
+    PointStamped,
+    Pose,
+    Quaternion,
+    Vector3,
+)
 from sensor_msgs.msg import Image
+from std_msgs.msg import ColorRGBA, Header
+from tf2_ros.buffer import Buffer
+from tf2_ros.transform_listener import TransformListener
+from visualization_msgs.msg import Marker, MarkerArray
 
-from mediapipe_ros_pkg.realsense import estimate_object_points
-from mediapipe_ros_pkg.realsense_subscriber import RealsenseSubsctiber
+from mediapipe_ros_pkg.realsense_subscriber import (
+    RealsenseSubsctiber,
+    estimate_object_points,
+)
 
 
 def main(args=None):
     rclpy.init(args=args)
-
     mediapipe_objectron_publisher = MediaPipeObjectronPublisher()
-    realsense_subscriber = RealsenseSubsctiber(mediapipe_objectron_publisher.callback)
-
-    rclpy.spin(realsense_subscriber)
-
-    realsense_subscriber.destroy_node()
-    mediapipe_objectron_publisher.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(mediapipe_objectron_publisher)
+    except KeyboardInterrupt:
+        mediapipe_objectron_publisher.destroy_node()
 
 
-class MediaPipeObjectronPublisher(Node):
+class MediaPipeObjectronPublisher(RealsenseSubsctiber):
     def __init__(self):
         super().__init__("mediapipe_objectron_publisher")
         self.objectron_image_publisher = self.create_publisher(
             Image, "/mediapipe/objectron/annotated_image", 10
         )
-        self.objectron_objects_publisher = self.create_publisher(
-            PolygonStamped, "/mediapipe/objectron/objects", 10
+        self.objectron_marker_array_publisher = self.create_publisher(
+            MarkerArray, "/mediapipe/objectron/marker_array", 10
         )
+
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.source_frame_rel = "camera_color_optical_frame"
+        self.target_frame_rel = "camera_color_frame"
 
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_objectron = mp.solutions.objectron
@@ -61,68 +74,99 @@ class MediaPipeObjectronPublisher(Node):
             # Draw box landmarks.
             annotated_image = image.copy()
             if results.detected_objects:
-                points = []
-                for detected_object in results.detected_objects:
+                markers = []
+                for idx, detected_object in enumerate(results.detected_objects):
                     self.mp_drawing.draw_landmarks(
                         annotated_image,
                         detected_object.landmarks_2d,
                         self.mp_objectron.BOX_CONNECTIONS,
                     )
-                    self.mp_drawing.draw_axis(
-                        annotated_image,
-                        detected_object.rotation,
-                        detected_object.translation,
-                    )
 
-                    image_point = (
-                        int(
-                            detected_object.landmarks_2d.landmark[self.CUP_CENTER_IDX].x
-                            * (rgbd_msg.rgb.width - 1)
-                        ),
-                        int(
-                            detected_object.landmarks_2d.landmark[self.CUP_CENTER_IDX].y
-                            * (rgbd_msg.rgb.height - 1)
-                        ),
+                    marker = self.create_marker(
+                        rgbd_msg, detected_object.landmarks_2d.landmark, idx
                     )
+                    if marker is not None:
+                        markers.append(marker)
 
-                    image_points_dict = {}
-                    image_points_dict[self.CUP_CENTER_IDX] = image_point
-
-                    # TODO
-                    previous_object_points_dict = {}
-                    previous_object_points_dict[self.CUP_CENTER_IDX] = (0, 0, 0.5)
-
-                    object_points = estimate_object_points(
-                        image_points_dict,
-                        previous_object_points_dict,
-                        self.bridge.imgmsg_to_cv2(rgbd_msg.depth, "passthrough"),
-                        rgbd_msg.depth_camera_info,
+                if len(markers) > 0:
+                    self.objectron_marker_array_publisher.publish(
+                        MarkerArray(markers=markers)
                     )
-
-                    points.append(
-                        Point32(
-                            x=object_points[self.CUP_CENTER_IDX][0],
-                            y=object_points[self.CUP_CENTER_IDX][1],
-                            z=object_points[self.CUP_CENTER_IDX][2],
-                        )
-                    )
-                self.objectron_objects_publisher.publish(
-                    PolygonStamped(
-                        header=rgb_image_msg.header, polygon=Polygon(points=points)
-                    )
-                )
 
             self.objectron_image_publisher.publish(
                 self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
             )
+            return
 
+    def create_marker(self, rgbd_msg, landmark_2d, id):
+        image_point = (
+            int(landmark_2d[self.CUP_CENTER_IDX].x * (rgbd_msg.rgb.width - 1)),
+            int(landmark_2d[self.CUP_CENTER_IDX].y * (rgbd_msg.rgb.height - 1)),
+        )
 
-if __name__ == "__main__":
-    mp_objectron = mp.solutions.objectron
-    mp_objectron.Objectron(
-        static_image_mode=False,
-        max_num_objects=5,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.99,
-        model_name="Cup",
-    )
+        image_points_dict = {}
+        image_points_dict[self.CUP_CENTER_IDX] = image_point
+
+        # TODO
+        previous_object_points_dict = {}
+        previous_object_points_dict[self.CUP_CENTER_IDX] = (0, 0, 0.5)
+
+        object_points_dict = estimate_object_points(
+            image_points_dict,
+            previous_object_points_dict,
+            self.bridge.imgmsg_to_cv2(rgbd_msg.depth, "passthrough"),
+            rgbd_msg.depth_camera_info,
+        )
+
+        diameter = 0.1
+        height = 0.06
+
+        point_stamped = PointStamped(
+            header=Header(frame_id=self.source_frame_rel),
+            point=Point(
+                x=object_points_dict[self.CUP_CENTER_IDX][0],
+                y=object_points_dict[self.CUP_CENTER_IDX][1],
+                z=object_points_dict[self.CUP_CENTER_IDX][2],
+            ),
+        )
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.target_frame_rel,
+                self.source_frame_rel,
+                rclpy.time.Time(),
+                timeout=rclpy.time.Duration(seconds=1),
+            )
+        except Exception as e:
+            print(e)
+            return None
+        point_stamped = tf2_geometry_msgs.do_transform_point(point_stamped, transform)
+
+        marker = Marker(
+            header=Header(
+                stamp=rgbd_msg.rgb.header.stamp,
+                frame_id=self.target_frame_rel,
+            ),
+            id=id,
+            type=Marker.CYLINDER,
+            action=Marker.ADD,
+            pose=Pose(
+                position=Point(
+                    x=point_stamped.point.x + diameter / 2,
+                    y=point_stamped.point.y,
+                    z=point_stamped.point.z,
+                ),
+                orientation=Quaternion(),
+            ),
+            scale=Vector3(
+                x=diameter,
+                y=diameter,
+                z=height,
+            ),
+            color=ColorRGBA(
+                r=1.0,
+                g=0.0,
+                b=0.0,
+                a=0.5,
+            ),
+        )
+        return marker
