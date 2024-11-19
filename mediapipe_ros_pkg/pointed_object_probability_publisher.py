@@ -12,37 +12,51 @@ from mediapipe_ros_pkg.util import quarterion_to_direction_vector
 
 def main(args=None):
     rclpy.init(args=args)
-
-    gesture_objectron_integrator = PointedObjectProbabilityPublisher()
-
-    gesture_subscriber = message_filters.Subscriber(
-        gesture_objectron_integrator, PoseArray, "/mediapipe/gesture/pointing_vector"
+    pointed_object_probability_publisher = PointedObjectProbabilityPublisher(
+        node_name="pointed_object_probability_publisher",
+        gesture_topic_name="/mediapipe/gesture/pointing_vector",
+        objectron_topic_name="/mediapipe/objectron/marker_array",
+        probability_topic_name="/mediapipe/pointed_object/probability",
+        distance_topic_name="/mediapipe/pointed_object/distance",
+        marker_array_topic_name="/mediapipe/pointed_object/marker_array",
     )
-    objectron_subscriber = message_filters.Subscriber(
-        gesture_objectron_integrator, MarkerArray, "/mediapipe/objectron/marker_array"
-    )
-
-    ts = message_filters.ApproximateTimeSynchronizer(
-        [gesture_subscriber, objectron_subscriber], 10, 1.0, allow_headerless=True
-    )
-    ts.registerCallback(gesture_objectron_integrator.callback)
-
-    rclpy.spin(gesture_objectron_integrator)
-
-    rclpy.shutdown()
+    try:
+        rclpy.spin(pointed_object_probability_publisher)
+    except KeyboardInterrupt:
+        pointed_object_probability_publisher.destroy_node()
 
 
 class PointedObjectProbabilityPublisher(Node):
-    def __init__(self):
-        super().__init__("gesture_objectron_integrator")
-        self.object_probability = self.create_publisher(
-            Float32MultiArray, "mediapipe/pointed_object/probability", 10
+    def __init__(
+        self,
+        node_name,
+        gesture_topic_name,
+        objectron_topic_name,
+        probability_topic_name,
+        distance_topic_name,
+        marker_array_topic_name,
+    ):
+        super().__init__(node_name)
+
+        gesture_subscriber = message_filters.Subscriber(
+            self, PoseArray, gesture_topic_name
+        )
+        objectron_subscriber = message_filters.Subscriber(
+            self, MarkerArray, objectron_topic_name
+        )
+        ts = message_filters.ApproximateTimeSynchronizer(
+            [gesture_subscriber, objectron_subscriber], 10, 1.0, allow_headerless=True
+        )
+        ts.registerCallback(self.callback)
+
+        self.probability_publisher = self.create_publisher(
+            Float32MultiArray, probability_topic_name, 10
         )
         self.distance_publisher = self.create_publisher(
-            Float32MultiArray, "/mediapipe/pointed_object/distance", 10
+            Float32MultiArray, distance_topic_name, 10
         )
         self.marker_array_publisher = self.create_publisher(
-            MarkerArray, "/mediapipe/pointed_object/marker_array", 10
+            MarkerArray, marker_array_topic_name, 10
         )
 
     def callback(self, gesture_msg, objectron_msg):
@@ -93,6 +107,6 @@ class PointedObjectProbabilityPublisher(Node):
         ed_msg = Float32MultiArray(data=eds)
         pd_msg = Float32MultiArray(data=ucps)
         marker_array = MarkerArray(markers=markers)
-        self.object_probability.publish(pd_msg)
+        self.probability_publisher.publish(pd_msg)
         self.distance_publisher.publish(ed_msg)
         self.marker_array_publisher.publish(marker_array)

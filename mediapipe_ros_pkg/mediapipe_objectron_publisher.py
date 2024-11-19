@@ -23,7 +23,13 @@ from mediapipe_ros_pkg.realsense_subscriber import (
 
 def main(args=None):
     rclpy.init(args=args)
-    mediapipe_objectron_publisher = MediaPipeObjectronPublisher()
+    mediapipe_objectron_publisher = MediaPipeObjectronPublisher(
+        node_name="mediapipe_objectron_publisher",
+        annotated_image_topic_name="/mediapipe/objectron/annotated_image",
+        objectron_marker_array_topic_name="/mediapipe/objectron/marker_array",
+        source_frame_rel="camera_color_optical_frame",
+        target_frame_rel="camera_color_frame",
+    )
     try:
         rclpy.spin(mediapipe_objectron_publisher)
     except KeyboardInterrupt:
@@ -31,19 +37,26 @@ def main(args=None):
 
 
 class MediaPipeObjectronPublisher(RealsenseSubsctiber):
-    def __init__(self):
-        super().__init__("mediapipe_objectron_publisher")
-        self.objectron_image_publisher = self.create_publisher(
-            Image, "/mediapipe/objectron/annotated_image", 10
+    def __init__(
+        self,
+        node_name,
+        annotated_image_topic_name,
+        objectron_marker_array_topic_name,
+        source_frame_rel,
+        target_frame_rel,
+    ):
+        super().__init__(node_name)
+        self.annotated_image_publisher = self.create_publisher(
+            Image, annotated_image_topic_name, 10
         )
         self.objectron_marker_array_publisher = self.create_publisher(
-            MarkerArray, "/mediapipe/objectron/marker_array", 10
+            MarkerArray, objectron_marker_array_topic_name, 10
         )
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.source_frame_rel = "camera_color_optical_frame"
-        self.target_frame_rel = "camera_color_frame"
+        self.source_frame_rel = source_frame_rel
+        self.target_frame_rel = target_frame_rel
 
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_objectron = mp.solutions.objectron
@@ -93,7 +106,7 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
                         MarkerArray(markers=markers)
                     )
 
-            self.objectron_image_publisher.publish(
+            self.annotated_image_publisher.publish(
                 self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
             )
             return

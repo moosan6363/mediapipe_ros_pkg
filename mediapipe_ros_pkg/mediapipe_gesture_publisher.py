@@ -10,7 +10,6 @@ import rclpy.logging
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point, Pose, PoseArray, Quaternion
 from mediapipe.framework.formats import landmark_pb2
-from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 from sensor_msgs.msg import Image
 from sklearn.decomposition import PCA
@@ -29,7 +28,17 @@ from mediapipe_ros_pkg.util import direction_vector_to_quaternion
 
 def main(args=None):
     rclpy.init(args=args)
-    mediapipe_gesture_publisher = MediapipeGesturePublisher()
+    mediapipe_gesture_publisher = MediapipeGesturePublisher(
+        node_name="mediapipe_gesture_publisher",
+        annotated_image_topic_name="/mediapipe/gesture/annotated_image",
+        pointing_vector_topic_name="/mediapipe/gesture/pointing_vector",
+        source_frame_rel="camera_color_optical_frame",
+        target_frame_rel="camera_color_frame",
+        model_path=Path(
+            "/home/ws/src/mediapipe_ros_pkg/models/gesture_recognizer.task"
+        ),
+        default_dtype=np.float32,
+    )
     try:
         rclpy.spin(mediapipe_gesture_publisher)
     except KeyboardInterrupt:
@@ -37,36 +46,39 @@ def main(args=None):
 
 
 class MediapipeGesturePublisher(RealsenseSubsctiber):
-    def __init__(self):
-        super().__init__("mediapipe_gesture_publisher")
-        self.gesture_image_publisher = self.create_publisher(
-            Image, "/mediapipe/gesture/annotated_image", 10
+    def __init__(
+        self,
+        node_name,
+        annotated_image_topic_name,
+        pointing_vector_topic_name,
+        source_frame_rel,
+        target_frame_rel,
+        model_path,
+        default_dtype,
+    ):
+        super().__init__(node_name)
+        self.annotated_image_publisher = self.create_publisher(
+            Image, annotated_image_topic_name, 10
         )
         self.pointing_vector_publisher = self.create_publisher(
-            PoseArray, "/mediapipe/gesture/pointing_vector", 10
+            PoseArray, pointing_vector_topic_name, 10
         )
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
-        self.source_frame_rel = "camera_color_optical_frame"
-        self.target_frame_rel = "camera_color_frame"
-
-        # TODO: Fix hard code
-        mediapipe_model_path = Path(
-            "/home/ws/src/mediapipe_ros_pkg/models/gesture_recognizer.task"
-        )
+        self.source_frame_rel = source_frame_rel
+        self.target_frame_rel = target_frame_rel
 
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
         self.mp_drawing_styles = mp.solutions.drawing_styles
 
-        self.base_options = python.BaseOptions(mediapipe_model_path)
         self.options = vision.GestureRecognizerOptions(
-            base_options=self.base_options, num_hands=1
+            base_options=mp.tasks.BaseOptions(model_path), num_hands=1
         )
         self.recognizer = vision.GestureRecognizer.create_from_options(self.options)
 
-        self.dtype = np.float32
+        self.default_dtype = default_dtype
 
         self.bridge = CvBridge()
 
@@ -86,7 +98,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
                     [0, 1, 0, 0, 0, 0],
                     [0, 0, 1, 0, 0, 0],
                 ],
-                dtype=self.dtype,
+                dtype=self.default_dtype,
             ),
             x_0=np.zeros(6),
             p=np.eye(6) * 1.0,
@@ -101,7 +113,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
                     [0, 0, 0, 0, 1, 0],
                     [0, 0, 0, 0, 0, 1],
                 ],
-                dtype=self.dtype,
+                dtype=self.default_dtype,
             ),
             verbose=True,
         )
@@ -158,7 +170,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
             if pose is not None:
                 poses.append(pose)
 
-        self.gesture_image_publisher.publish(
+        self.annotated_image_publisher.publish(
             self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
         )
 
@@ -285,7 +297,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
                 for object_points in object_points_dict.values()
                 if object_points is not None
             ],
-            dtype=self.dtype,
+            dtype=self.default_dtype,
         )
         if len(object_points) >= 4:
             self.pca.fit(object_points)
@@ -335,7 +347,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
                 for object_points in object_points_dict.values()
                 if object_points is not None
             ],
-            dtype=self.dtype,
+            dtype=self.default_dtype,
         )
 
         k = np.array(rgb_camera_info.k).reshape(3, 3)
@@ -345,7 +357,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
         try:
             retval, rvec, tvec = cv2.solvePnP(
                 object_points,
-                image_points.astype(self.dtype),
+                image_points.astype(self.default_dtype),
                 k,
                 d,
                 flags=cv2.SOLVEPNP_P3P,
