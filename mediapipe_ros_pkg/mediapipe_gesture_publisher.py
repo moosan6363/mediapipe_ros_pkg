@@ -82,7 +82,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
 
         self.bridge = CvBridge()
 
-        self.index_landmarks = [
+        self.enable_landmaks = [
             self.mp_hands.HandLandmark.INDEX_FINGER_MCP,
             self.mp_hands.HandLandmark.INDEX_FINGER_PIP,
             self.mp_hands.HandLandmark.INDEX_FINGER_DIP,
@@ -120,7 +120,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
 
         self.kf_dict = {
             landmark_idx: deepcopy(self.kalman_filter)
-            for landmark_idx in self.index_landmarks
+            for landmark_idx in self.enable_landmaks
         }
 
         self.pca = PCA(n_components=1)
@@ -196,7 +196,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
         hand_landmarks_proto,
     ):
         image_points_dict = {}
-        for landmark_idx in self.index_landmarks:
+        for landmark_idx in self.enable_landmaks:
             if (
                 0 <= hand_landmarks_proto.landmark[landmark_idx].x <= 1
                 and 0 <= hand_landmarks_proto.landmark[landmark_idx].y <= 1

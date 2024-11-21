@@ -31,6 +31,7 @@ setup(
         "console_scripts": [
             "mediapipe_gesture_publisher = mediapipe_ros_pkg.mediapipe_gesture_publisher:main",
             "mediapipe_objectron_publisher = mediapipe_ros_pkg.mediapipe_objectron_publisher:main",
+            "mediapipe_head_direction_publisher = mediapipe_ros_pkg.mediapipe_head_direction_publisher:main",
             "pointed_object_probability_publisher = mediapipe_ros_pkg.pointed_object_probability_publisher:main",
         ],
     },
