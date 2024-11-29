@@ -14,6 +14,12 @@ launch:
 
 - node:
     pkg: "mediapipe_ros_pkg"
+    exec: "mediapipe_head_direction_publisher"
+    name: "mediapipe_head_direction_publisher"
+    namespace: "mediapipe_ros_pkg"
+
+- node:
+    pkg: "mediapipe_ros_pkg"
     exec: "pointed_object_probability_publisher"
     name: "pointed_object_probability_publisher"
     namespace: "mediapipe_ros_pkg"

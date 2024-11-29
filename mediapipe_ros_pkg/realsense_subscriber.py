@@ -7,15 +7,15 @@ from realsense2_camera_msgs.msg import RGBD
 
 
 class RealsenseSubsctiber(Node):
-    def __init__(self, node_name):
+    def __init__(self, node_name, topic_name):
         super().__init__(node_name)
 
         self.subscription = self.create_subscription(
-            RGBD, "/camera/camera/rgbd", self.callback, 10
+            RGBD, topic_name, self.callback, 10
         )
 
     @abstractmethod
-    def callback(self, rgbd_msg):
+    def callback(self, msg):
         pass
 
 
@@ -63,6 +63,7 @@ def estimate_object_points(
 
             # Crop around the pixel and get the depth value using the nearest 12.5% of the depth value
             # TODO: Fix hard code
+            # breakpoint()
             if valid_depths.size > 0:
                 depth = np.percentile(valid_depths, percentile)
                 point_3d = rs2_deproject_pixel_to_point(

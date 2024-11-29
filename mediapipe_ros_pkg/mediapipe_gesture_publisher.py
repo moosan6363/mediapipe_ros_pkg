@@ -8,7 +8,7 @@ import numpy as np
 import rclpy
 import rclpy.logging
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Point, Pose, PoseArray, Quaternion
+from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
 from sensor_msgs.msg import Image
@@ -23,17 +23,19 @@ from mediapipe_ros_pkg.realsense_subscriber import (
     RealsenseSubsctiber,
     estimate_object_points,
 )
-from mediapipe_ros_pkg.util import direction_vector_to_quaternion
+from mediapipe_ros_pkg.util import direction_vector_to_quaternion, write_poining_vector
 
 
 def main(args=None):
     rclpy.init(args=args)
+    camera_name = "front_camera"
     mediapipe_gesture_publisher = MediapipeGesturePublisher(
         node_name="mediapipe_gesture_publisher",
+        realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/mediapipe/gesture/annotated_image",
         pointing_vector_topic_name="/mediapipe/gesture/pointing_vector",
-        source_frame_rel="camera_color_optical_frame",
-        target_frame_rel="camera_color_frame",
+        source_frame_rel=f"{camera_name}_color_optical_frame",
+        target_frame_rel=f"{camera_name}_color_frame",
         model_path=Path(
             "/home/ws/src/mediapipe_ros_pkg/models/gesture_recognizer.task"
         ),
@@ -49,6 +51,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
     def __init__(
         self,
         node_name,
+        realsense_topic_name,
         annotated_image_topic_name,
         pointing_vector_topic_name,
         source_frame_rel,
@@ -56,12 +59,12 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
         model_path,
         default_dtype,
     ):
-        super().__init__(node_name)
+        super().__init__(node_name, realsense_topic_name)
         self.annotated_image_publisher = self.create_publisher(
             Image, annotated_image_topic_name, 10
         )
         self.pointing_vector_publisher = self.create_publisher(
-            PoseArray, pointing_vector_topic_name, 10
+            PoseStamped, pointing_vector_topic_name, 10
         )
 
         self.tf_buffer = Buffer()
@@ -74,7 +77,11 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
         self.mp_drawing_styles = mp.solutions.drawing_styles
 
         self.options = vision.GestureRecognizerOptions(
-            base_options=mp.tasks.BaseOptions(model_path), num_hands=1
+            base_options=mp.tasks.BaseOptions(model_path),
+            num_hands=1,
+            min_hand_detection_confidence=0.2,
+            min_hand_presence_confidence=0.2,
+            min_tracking_confidence=0.2,
         )
         self.recognizer = vision.GestureRecognizer.create_from_options(self.options)
 
@@ -138,9 +145,11 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
             recognition_result = self.recognizer.recognize(mp_image)
 
         annotated_image = mp_image.numpy_view().copy()
-        poses = []
 
-        for hand_landmarks in recognition_result.hand_landmarks:
+        # TODO: only one hand
+        if len(recognition_result.hand_landmarks) == 1:
+            hand_landmarks = recognition_result.hand_landmarks[0]
+
             hand_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
             hand_landmarks_proto.landmark.extend(
                 [
@@ -168,21 +177,18 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
                 hand_landmarks_proto,
             )
             if pose is not None:
-                poses.append(pose)
+                pose_stamped = PoseStamped(
+                    header=Header(
+                        stamp=rgbd_msg.header.stamp,
+                        frame_id=self.target_frame_rel,
+                    ),
+                    pose=pose,
+                )
+                self.pointing_vector_publisher.publish(pose_stamped)
 
         self.annotated_image_publisher.publish(
             self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
         )
-
-        if len(poses) > 0:
-            pose_array = PoseArray(
-                header=Header(
-                    stamp=rgbd_msg.header.stamp,
-                    frame_id=self.target_frame_rel,
-                ),
-                poses=poses,
-            )
-            self.pointing_vector_publisher.publish(pose_array)
 
         return
 
@@ -261,13 +267,13 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
             orientation = Quaternion(
                 x=orientation[0], y=orientation[1], z=orientation[2], w=orientation[3]
             )
-            position_point = Point(
+            position = Point(
                 x=float(position[0]),
                 y=float(position[1]),
                 z=float(position[2]),
             )
             pose = Pose(
-                position=position_point,
+                position=position,
                 orientation=orientation,
             )
 
@@ -380,20 +386,6 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
 
             end_image_point, _ = cv2.projectPoints(end_object_point, rvec, tvec, k, d)
 
-            self.write_poining_vector(
+            write_poining_vector(
                 rgb_image, start_image_point[0][0], end_image_point[0][0], color
             )
-
-    def write_poining_vector(
-        self, rgb_image, start_image_point, end_image_point, color
-    ):
-        try:
-            cv2.line(
-                rgb_image,
-                (int(start_image_point[0]), int(start_image_point[1])),
-                (int(end_image_point[0]), int(end_image_point[1])),
-                color,
-                3,
-            )
-        except cv2.error:
-            pass

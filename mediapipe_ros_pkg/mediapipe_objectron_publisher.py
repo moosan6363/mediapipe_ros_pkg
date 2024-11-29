@@ -23,12 +23,14 @@ from mediapipe_ros_pkg.realsense_subscriber import (
 
 def main(args=None):
     rclpy.init(args=args)
+    camera_name = "front_camera"
     mediapipe_objectron_publisher = MediaPipeObjectronPublisher(
         node_name="mediapipe_objectron_publisher",
+        realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/mediapipe/objectron/annotated_image",
         objectron_marker_array_topic_name="/mediapipe/objectron/marker_array",
-        source_frame_rel="camera_color_optical_frame",
-        target_frame_rel="camera_color_frame",
+        source_frame_rel=f"{camera_name}_color_optical_frame",
+        target_frame_rel=f"{camera_name}_color_frame",
     )
     try:
         rclpy.spin(mediapipe_objectron_publisher)
@@ -40,12 +42,13 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
     def __init__(
         self,
         node_name,
+        realsense_topic_name,
         annotated_image_topic_name,
         objectron_marker_array_topic_name,
         source_frame_rel,
         target_frame_rel,
     ):
-        super().__init__(node_name)
+        super().__init__(node_name, realsense_topic_name)
         self.annotated_image_publisher = self.create_publisher(
             Image, annotated_image_topic_name, 10
         )
@@ -112,13 +115,11 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
             return
 
     def create_marker(self, rgbd_msg, landmark_2d, id):
-        image_point = (
+        image_points_dict = {}
+        image_points_dict[self.CUP_CENTER_IDX] = (
             int(landmark_2d[self.CUP_CENTER_IDX].x * (rgbd_msg.rgb.width - 1)),
             int(landmark_2d[self.CUP_CENTER_IDX].y * (rgbd_msg.rgb.height - 1)),
         )
-
-        image_points_dict = {}
-        image_points_dict[self.CUP_CENTER_IDX] = image_point
 
         # TODO
         previous_object_points_dict = {}
@@ -134,52 +135,57 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
         diameter = 0.1
         height = 0.06
 
-        point_stamped = PointStamped(
-            header=Header(frame_id=self.source_frame_rel),
-            point=Point(
-                x=object_points_dict[self.CUP_CENTER_IDX][0],
-                y=object_points_dict[self.CUP_CENTER_IDX][1],
-                z=object_points_dict[self.CUP_CENTER_IDX][2],
-            ),
-        )
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                self.target_frame_rel,
-                self.source_frame_rel,
-                rclpy.time.Time(),
-                timeout=rclpy.time.Duration(seconds=1),
-            )
-        except Exception as e:
-            print(e)
+        if object_points_dict[self.CUP_CENTER_IDX] is None:
             return None
-        point_stamped = tf2_geometry_msgs.do_transform_point(point_stamped, transform)
-
-        marker = Marker(
-            header=Header(
-                stamp=rgbd_msg.rgb.header.stamp,
-                frame_id=self.target_frame_rel,
-            ),
-            id=id,
-            type=Marker.CYLINDER,
-            action=Marker.ADD,
-            pose=Pose(
-                position=Point(
-                    x=point_stamped.point.x + diameter / 2,
-                    y=point_stamped.point.y,
-                    z=point_stamped.point.z,
+        else:
+            point_stamped = PointStamped(
+                header=Header(frame_id=self.source_frame_rel),
+                point=Point(
+                    x=object_points_dict[self.CUP_CENTER_IDX][0],
+                    y=object_points_dict[self.CUP_CENTER_IDX][1],
+                    z=object_points_dict[self.CUP_CENTER_IDX][2],
                 ),
-                orientation=Quaternion(),
-            ),
-            scale=Vector3(
-                x=diameter,
-                y=diameter,
-                z=height,
-            ),
-            color=ColorRGBA(
-                r=1.0,
-                g=0.0,
-                b=0.0,
-                a=0.5,
-            ),
-        )
-        return marker
+            )
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.target_frame_rel,
+                    self.source_frame_rel,
+                    rclpy.time.Time(),
+                    timeout=rclpy.time.Duration(seconds=1),
+                )
+            except Exception as e:
+                print(e)
+                return None
+            point_stamped = tf2_geometry_msgs.do_transform_point(
+                point_stamped, transform
+            )
+
+            marker = Marker(
+                header=Header(
+                    stamp=rgbd_msg.rgb.header.stamp,
+                    frame_id=self.target_frame_rel,
+                ),
+                id=id,
+                type=Marker.CYLINDER,
+                action=Marker.ADD,
+                pose=Pose(
+                    position=Point(
+                        x=point_stamped.point.x + diameter / 2,
+                        y=point_stamped.point.y,
+                        z=point_stamped.point.z,
+                    ),
+                    orientation=Quaternion(),
+                ),
+                scale=Vector3(
+                    x=diameter,
+                    y=diameter,
+                    z=height,
+                ),
+                color=ColorRGBA(
+                    r=1.0,
+                    g=0.0,
+                    b=0.0,
+                    a=0.5,
+                ),
+            )
+            return marker
