@@ -27,7 +27,7 @@ def main(args=None):
         node_name="mediapipe_gesture_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/mediapipe/head/annotated_image",
-        head_direction_vector="/mediapipe/head/head_direction_vector",
+        head_pose_topic_name="/mediapipe/head/head_direction_vector",
         source_frame_rel=f"{camera_name}_color_optical_frame",
         target_frame_rel=f"{camera_name}_color_frame",
         model_path=Path(
@@ -47,7 +47,7 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
         node_name,
         realsense_topic_name,
         annotated_image_topic_name,
-        head_direction_vector,
+        head_pose_topic_name,
         source_frame_rel,
         target_frame_rel,
         model_path,
@@ -57,8 +57,8 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
         self.annotated_image_publisher = self.create_publisher(
             Image, annotated_image_topic_name, 10
         )
-        self.head_direction_publisher = self.create_publisher(
-            PoseStamped, head_direction_vector, 10
+        self.head_pose_publisher = self.create_publisher(
+            PoseStamped, head_pose_topic_name, 10
         )
 
         self.tf_buffer = Buffer()
@@ -70,6 +70,8 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
             base_options=mp.tasks.BaseOptions(model_path),
             output_face_blendshapes=True,
             output_facial_transformation_matrixes=True,
+            min_face_detection_confidence=0.1,
+            min_face_presence_confidence=0.1,
             num_faces=1,
         )
         self.detector = mp.tasks.vision.FaceLandmarker.create_from_options(self.options)
@@ -111,29 +113,12 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
 
     def callback(self, rgbd_msg):
         rgb_image_msg = rgbd_msg.rgb
-        mp_image = mp.Image(
-            image_format=mp.ImageFormat.SRGB,
-            data=self.bridge.imgmsg_to_cv2(rgb_image_msg, "rgb8"),
-        )
+        image = self.bridge.imgmsg_to_cv2(rgb_image_msg, "rgb8")
+        annotated_image = image.copy()
 
-        detection_result = self.detector.detect(mp_image)
-
-        annotated_image = mp_image.numpy_view().copy()
-
+        face_landmarks_proto = self.detect(image)
         # TODO: only one face is detected
-        if len(detection_result.face_landmarks) == 1:
-            face_landmarks = detection_result.face_landmarks[0]
-
-            face_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
-            face_landmarks_proto.landmark.extend(
-                [
-                    landmark_pb2.NormalizedLandmark(
-                        x=landmark.x, y=landmark.y, z=landmark.z
-                    )
-                    for landmark in face_landmarks
-                ]
-            )
-
+        if face_landmarks_proto is not None:
             annotated_image = self.draw_landmarks(annotated_image, face_landmarks_proto)
 
             pose = self.head_direction_vector_estimation(
@@ -150,13 +135,43 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
                     ),
                     pose=pose,
                 )
-                self.head_direction_publisher.publish(pose_stamped)
+                self.head_pose_publisher.publish(pose_stamped)
 
         self.annotated_image_publisher.publish(
             self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
         )
 
         return
+
+    def detect(self, image):
+        height, width, _ = image.shape
+        _, mid_width = height // 2, width // 2
+
+        crop_images = np.array(
+            [
+                image[:, :mid_width],  # left half
+                image[:, mid_width:],  # right half
+            ]
+        )
+
+        for i, crop_image in enumerate(crop_images):
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=crop_image)
+            detection_result = self.detector.detect(mp_image)
+            if len(detection_result.face_landmarks) > 0:
+                face_landmarks = detection_result.face_landmarks[0]
+                face_landmarks_proto = landmark_pb2.NormalizedLandmarkList()
+                face_landmarks_proto.landmark.extend(
+                    [
+                        landmark_pb2.NormalizedLandmark(
+                            x=landmark.x / 2 if i == 0 else (landmark.x / 2 + 0.5),
+                            y=landmark.y,
+                            z=landmark.z,
+                        )
+                        for landmark in face_landmarks
+                    ]
+                )
+                return face_landmarks_proto
+        return None
 
     def head_direction_vector_estimation(
         self,

@@ -1,4 +1,3 @@
-import numpy as np
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.substitutions import PathJoinSubstitution
@@ -46,12 +45,12 @@ def generate_launch_description():
         arguments=[
             "front_camera_link",
             "side_camera_link",
-            "0.27",
-            "0.32",
-            f"{0.58-0.125}",
+            "0.0",
+            "0.19",
+            f"{0.59-0.125}",
             "0.0",
             "0.0",
-            f"{-np.pi/2}",
+            "0.0",
         ],
     )
     return LaunchDescription(
