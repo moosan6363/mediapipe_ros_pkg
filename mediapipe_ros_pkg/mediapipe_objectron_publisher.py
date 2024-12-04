@@ -129,7 +129,7 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
             image_points_dict,
             previous_object_points_dict,
             self.bridge.imgmsg_to_cv2(rgbd_msg.depth, "passthrough"),
-            rgbd_msg.depth_camera_info,
+            rgbd_msg.rgb_camera_info,
         )
 
         diameter = 0.1

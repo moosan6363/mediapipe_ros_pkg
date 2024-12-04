@@ -29,11 +29,11 @@ from mediapipe_ros_pkg.util import direction_vector_to_quaternion, write_poining
 def main(args=None):
     rclpy.init(args=args)
     camera_name = "front_camera"
-    mediapipe_gesture_publisher = MediapipeGesturePublisher(
-        node_name="mediapipe_gesture_publisher",
+    mediapipe_gesture_publisher = MediapipeHandPosePublisher(
+        node_name="mediapipe_hand_pose_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
-        annotated_image_topic_name="/mediapipe/gesture/annotated_image",
-        pointing_vector_topic_name="/mediapipe/gesture/pointing_vector",
+        annotated_image_topic_name="/mediapipe/hand/annotated_image",
+        pointing_vector_topic_name="/mediapipe/hand/pose",
         source_frame_rel=f"{camera_name}_color_optical_frame",
         target_frame_rel=f"{camera_name}_color_frame",
         model_path=Path(
@@ -47,7 +47,7 @@ def main(args=None):
         mediapipe_gesture_publisher.destroy_node()
 
 
-class MediapipeGesturePublisher(RealsenseSubsctiber):
+class MediapipeHandPosePublisher(RealsenseSubsctiber):
     def __init__(
         self,
         node_name,
@@ -229,7 +229,7 @@ class MediapipeGesturePublisher(RealsenseSubsctiber):
             image_points_dict,
             previous_object_points_dict,
             depth_image,
-            depth_camera_info,
+            rgb_camera_info,
         )
 
         # without Kalman filter

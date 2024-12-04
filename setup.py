@@ -30,9 +30,10 @@ setup(
     entry_points={
         "console_scripts": [
             "static_frame_publisher = mediapipe_ros_pkg.static_frame_publisher:main",
-            "mediapipe_gesture_publisher = mediapipe_ros_pkg.mediapipe_gesture_publisher:main",
+            "mediapipe_hand_pose_publisher = mediapipe_ros_pkg.mediapipe_hand_pose_publisher:main",
             "mediapipe_objectron_publisher = mediapipe_ros_pkg.mediapipe_objectron_publisher:main",
-            "mediapipe_head_direction_publisher = mediapipe_ros_pkg.mediapipe_head_direction_publisher:main",
+            "mediapipe_head_pose_publisher = mediapipe_ros_pkg.mediapipe_head_pose_publisher:main",
+            "sixdrepnet_head_pose_publisher = mediapipe_ros_pkg.sixdrepnet_head_pose_publisher:main",
             "pointed_object_probability_publisher = mediapipe_ros_pkg.pointed_object_probability_publisher:main",
         ],
     },

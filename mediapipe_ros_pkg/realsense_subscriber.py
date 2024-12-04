@@ -23,18 +23,18 @@ def estimate_object_points(
     image_points_dict,
     previous_object_points_dict,
     depth_image,
-    depth_camera_info,
+    rgb_camera_info,
     crop_size_max=10,
     percentile=25,
 ):
     object_points_dict = {}
     _intrinsics = intrinsics()
-    _intrinsics.width = depth_camera_info.width
-    _intrinsics.height = depth_camera_info.height
-    _intrinsics.fx = depth_camera_info.k[0]
-    _intrinsics.fy = depth_camera_info.k[4]
-    _intrinsics.ppx = depth_camera_info.k[2]
-    _intrinsics.ppy = depth_camera_info.k[5]
+    _intrinsics.width = rgb_camera_info.width
+    _intrinsics.height = rgb_camera_info.height
+    _intrinsics.fx = rgb_camera_info.k[0]
+    _intrinsics.fy = rgb_camera_info.k[4]
+    _intrinsics.ppx = rgb_camera_info.k[2]
+    _intrinsics.ppy = rgb_camera_info.k[5]
 
     for key, image_point in image_points_dict.items():
         if image_point is None:

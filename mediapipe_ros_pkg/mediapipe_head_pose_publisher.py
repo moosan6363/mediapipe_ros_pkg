@@ -13,7 +13,10 @@ from std_msgs.msg import Header
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 
-from mediapipe_ros_pkg.realsense_subscriber import RealsenseSubsctiber
+from mediapipe_ros_pkg.realsense_subscriber import (
+    RealsenseSubsctiber,
+    estimate_object_points,
+)
 from mediapipe_ros_pkg.util import (
     rmat_to_quaternion,
     write_poining_vector,
@@ -23,11 +26,11 @@ from mediapipe_ros_pkg.util import (
 def main(args=None):
     rclpy.init(args=args)
     camera_name = "side_camera"
-    mediapipe_gesture_publisher = MediapipeHeadDirectionPublisher(
-        node_name="mediapipe_gesture_publisher",
+    mediapipe_gesture_publisher = MediapipeHeadPosePublisher(
+        node_name="mediapipe_head_pose_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/mediapipe/head/annotated_image",
-        head_pose_topic_name="/mediapipe/head/head_direction_vector",
+        head_pose_topic_name="/mediapipe/head/pose",
         source_frame_rel=f"{camera_name}_color_optical_frame",
         target_frame_rel=f"{camera_name}_color_frame",
         model_path=Path(
@@ -41,7 +44,7 @@ def main(args=None):
         mediapipe_gesture_publisher.destroy_node()
 
 
-class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
+class MediapipeHeadPosePublisher(RealsenseSubsctiber):
     def __init__(
         self,
         node_name,
@@ -70,8 +73,8 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
             base_options=mp.tasks.BaseOptions(model_path),
             output_face_blendshapes=True,
             output_facial_transformation_matrixes=True,
-            min_face_detection_confidence=0.1,
-            min_face_presence_confidence=0.1,
+            min_face_detection_confidence=0.5,
+            min_face_presence_confidence=0.5,
             num_faces=1,
         )
         self.detector = mp.tasks.vision.FaceLandmarker.create_from_options(self.options)
@@ -96,6 +99,7 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
             "right_eye_right_corner": 446,
             "left_Mouth_corner": 57,
             "right_mouth_corner": 287,
+            "between_eyes": 6,
         }
 
         self.object_points_dict = {
@@ -105,11 +109,8 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
             "right_eye_right_corner": [0.225, 0.17, -0.135],
             "left_Mouth_corner": [-0.15, -0.15, -0.125],
             "right_mouth_corner": [0.15, -0.15, -0.125],
+            "between_eyes": [0.0, 0.17, -0.135],
         }
-
-        self.between_eyes_object_point = np.array(
-            [0.0, 0.17, -0.135], dtype=self.default_dtype
-        )
 
     def callback(self, rgbd_msg):
         rgb_image_msg = rgbd_msg.rgb
@@ -123,7 +124,9 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
 
             pose = self.head_direction_vector_estimation(
                 rgb_image=annotated_image,
+                depth_image=rgbd_msg.depth,
                 rgb_camera_info=rgbd_msg.rgb_camera_info,
+                depth_camera_info=rgbd_msg.depth_camera_info,
                 face_landmarks_proto=face_landmarks_proto,
             )
 
@@ -145,14 +148,41 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
 
     def detect(self, image):
         height, width, _ = image.shape
-        _, mid_width = height // 2, width // 2
+        mid_height, mid_width = height // 2, width // 2
+        quarter_height, quarter_width = height // 4, width // 4
 
         crop_images = np.array(
             [
-                image[:, :mid_width],  # left half
-                image[:, mid_width:],  # right half
+                image[:mid_height, :mid_width],  # top-left
+                image[:mid_height, quarter_width : quarter_width * 3],  # top-center
+                image[:mid_height, mid_width:],  # top-right
+                image[quarter_height : quarter_height * 3, :mid_width],  # center-left
+                image[
+                    quarter_height : quarter_height * 3,
+                    quarter_width : quarter_width * 3,
+                ],  # center-center
+                image[quarter_height : quarter_height * 3, mid_width:],  # center-right
+                image[mid_height:, :mid_width],  # bottom-left
+                image[mid_height:, quarter_width : quarter_width * 3],  # bottom-center
+                image[mid_height:, mid_width:],  # bottom-right
             ]
         )
+
+        def x_coordinate(i, x):
+            if i % 3 == 0:
+                return x / 2
+            elif i % 3 == 1:
+                return (2 * x + 1) / 4
+            elif i % 3 == 2:
+                return (x + 1) / 2
+
+        def y_coordinate(i, y):
+            if i < 3:
+                return y / 2
+            elif i < 6:
+                return (2 * y + 1) / 4
+            elif i < 9:
+                return (y + 1) / 2
 
         for i, crop_image in enumerate(crop_images):
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=crop_image)
@@ -163,8 +193,8 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
                 face_landmarks_proto.landmark.extend(
                     [
                         landmark_pb2.NormalizedLandmark(
-                            x=landmark.x / 2 if i == 0 else (landmark.x / 2 + 0.5),
-                            y=landmark.y,
+                            x=x_coordinate(i, landmark.x),
+                            y=y_coordinate(i, landmark.y),
                             z=landmark.z,
                         )
                         for landmark in face_landmarks
@@ -176,7 +206,9 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
     def head_direction_vector_estimation(
         self,
         rgb_image,
+        depth_image,
         rgb_camera_info,
+        depth_camera_info,
         face_landmarks_proto,
     ):
         image_points_dict = {}
@@ -204,22 +236,43 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
         )
 
         if retval:
-            self.visualize_line(rgb_image, rvec, tvec, k, d, object_points, (0, 255, 0))
+            self.visualize_line(rgb_image, rvec, tvec, k, d, (0, 255, 0))
             rmat, _ = cv2.Rodrigues(rvec)
 
             orientation = rmat_to_quaternion(rmat)
-
-            position = np.dot(rmat, self.between_eyes_object_point) + tvec.flatten()
-
             orientation = Quaternion(
                 x=orientation[0], y=orientation[1], z=orientation[2], w=orientation[3]
             )
 
-            position = Point(
-                x=float(position[0]),
-                y=float(position[1]),
-                z=float(position[2]),
+            ###--------------------------------------
+            # Option1 for Position Estimation
+            # position = (
+            #     np.dot(rmat, self.object_points_dict["between_eyes"]) + tvec.flatten()
+            # )
+
+            # position = Point(
+            #     x=float(position[0]),
+            #     y=float(position[1]),
+            #     z=float(position[2]),
+            # )
+
+            # Option2 for Position Estimation
+            previous_object_points_dict = {}
+            previous_object_points_dict["between_eyes"] = (0, 0, 0.5)
+
+            object_points_dict = estimate_object_points(
+                {"between_eyes": image_points_dict["between_eyes"]},
+                previous_object_points_dict,
+                self.bridge.imgmsg_to_cv2(depth_image, "passthrough"),
+                depth_camera_info,
             )
+            position = Point(
+                x=object_points_dict["between_eyes"][0],
+                y=object_points_dict["between_eyes"][1],
+                z=object_points_dict["between_eyes"][2],
+            )
+
+            ###--------------------------------------
 
             pose = Pose(
                 position=position,
@@ -292,9 +345,9 @@ class MediapipeHeadDirectionPublisher(RealsenseSubsctiber):
         )
         return annotated_image
 
-    def visualize_line(self, rgb_image, rvec, tvec, k, d, object_points, color):
-        start_object_point = self.between_eyes_object_point
-        end_object_point = object_points[0] + np.array(
+    def visualize_line(self, rgb_image, rvec, tvec, k, d, color):
+        start_object_point = np.array(self.object_points_dict["between_eyes"])
+        end_object_point = start_object_point + np.array(
             [0, 0, 1], dtype=self.default_dtype
         )
 

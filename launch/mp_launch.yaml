@@ -2,8 +2,8 @@ launch:
 
 - node:
     pkg: "mediapipe_ros_pkg"
-    exec: "mediapipe_gesture_publisher"
-    name: "mediapipe_gesture_publisher"
+    exec: "mediapipe_hand_pose_publisher"
+    name: "mediapipe_hand_pose_publisher"
     namespace: "mediapipe_ros_pkg"
 
 - node:
@@ -12,14 +12,20 @@ launch:
     name: "mediapipe_objectron_publisher"
     namespace: "mediapipe_ros_pkg"
 
-- node:
-    pkg: "mediapipe_ros_pkg"
-    exec: "mediapipe_head_direction_publisher"
-    name: "mediapipe_head_direction_publisher"
-    namespace: "mediapipe_ros_pkg"
+# - node:
+#     pkg: "mediapipe_ros_pkg"
+#     exec: "mediapipe_head_pose_publisher"
+#     name: "mediapipe_head_pose_publisher"
+#     namespace: "mediapipe_ros_pkg"
 
 - node:
     pkg: "mediapipe_ros_pkg"
-    exec: "pointed_object_probability_publisher"
-    name: "pointed_object_probability_publisher"
+    exec: "sixdrepnet_head_pose_publisher"
+    name: "sixdrepnet_head_pose_publisher"
     namespace: "mediapipe_ros_pkg"
+
+# - node:
+#     pkg: "mediapipe_ros_pkg"
+#     exec: "pointed_object_probability_publisher"
+#     name: "pointed_object_probability_publisher"
+#     namespace: "mediapipe_ros_pkg"

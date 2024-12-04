@@ -46,7 +46,7 @@ def generate_launch_description():
             "front_camera_link",
             "side_camera_link",
             "0.0",
-            "0.19",
+            "0.22",
             f"{0.59-0.125}",
             "0.0",
             "0.0",
