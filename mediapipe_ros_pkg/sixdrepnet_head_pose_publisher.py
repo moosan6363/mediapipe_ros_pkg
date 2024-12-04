@@ -12,6 +12,7 @@ from face_detection import RetinaFace
 from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
 from PIL import Image as PILImage
 from pyrealsense2 import intrinsics, rs2_deproject_pixel_to_point
+from scipy.spatial.transform import Rotation
 from sensor_msgs.msg import Image
 from sixdrepnet.model import SixDRepNet
 from std_msgs.msg import Header
@@ -21,15 +22,11 @@ from torch.backends import cudnn
 from torchvision import transforms
 
 from mediapipe_ros_pkg.realsense_subscriber import RealsenseSubsctiber
-from mediapipe_ros_pkg.util import (
-    compute_euler_angles_from_rotation_matrices,
-    quaternion_from_euler,
-)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    camera_name = "side_camera"
+    camera_name = "front_camera"
     mediapipe_gesture_publisher = SixDRepnetHeadPosePublisher(
         node_name="sixdrepnet_head_pose_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
@@ -174,7 +171,9 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
                 print("Head pose estimation: %2f ms" % ((end - start) * 1000.0))
 
                 euler = (
-                    compute_euler_angles_from_rotation_matrices(R_pred) * 180 / np.pi
+                    self.compute_euler_angles_from_rotation_matrices(R_pred)
+                    * 180
+                    / np.pi
                 )
                 p_pred_deg = euler[:, 0].cpu()
                 y_pred_deg = euler[:, 1].cpu()
@@ -214,10 +213,20 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
                         z=object_point[2],
                     )
 
-                    orientation = quaternion_from_euler(
-                        roll=np.deg2rad(r_pred_deg.numpy())[0],
-                        pitch=np.deg2rad(p_pred_deg.numpy())[0],
-                        yaw=-np.deg2rad(y_pred_deg.numpy())[0],
+                    orientation = Rotation.from_euler(
+                        "xyz",
+                        [
+                            r_pred_deg.numpy()[0],
+                            p_pred_deg.numpy()[0],
+                            -y_pred_deg.numpy()[0],
+                        ],
+                        degrees=True,
+                    ).as_quat()
+                    orientation = Quaternion(
+                        x=orientation[0],
+                        y=orientation[1],
+                        z=orientation[2],
+                        w=orientation[3],
                     )
 
                     pose = Pose(
@@ -241,9 +250,6 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
 
                     ###--------------------------------------
                     # TODO: To correct because the orientation does not match the ROS2 coordinate system
-
-                    from scipy.spatial.transform import Rotation
-
                     from mediapipe_ros_pkg.util import quaternion_multiply
 
                     rotation = Rotation.from_euler(
@@ -264,6 +270,47 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
                     ###--------------------------------------
                     return pose
 
+            return None
+
+    def estimate_object_points(
+        self,
+        image_point,  # center of the object
+        width,
+        height,
+        depth_image,
+        rgb_cemara_info,
+        percentile=25,
+    ):
+        _intrinsics = intrinsics()
+        _intrinsics.width = rgb_cemara_info.width
+        _intrinsics.height = rgb_cemara_info.height
+        _intrinsics.fx = rgb_cemara_info.k[0]
+        _intrinsics.fy = rgb_cemara_info.k[4]
+        _intrinsics.ppx = rgb_cemara_info.k[2]
+        _intrinsics.ppy = rgb_cemara_info.k[5]
+
+        cropped_depth = depth_image[
+            max(0, image_point[1] - height // 2) : min(
+                depth_image.shape[0] - 1, image_point[1] + height // 2 + 1
+            ),
+            max(0, image_point[0] - width // 2) : min(
+                depth_image.shape[1] - 1, image_point[0] + width // 2 + 1
+            ),
+        ]
+
+        # Filter out invalid depth values
+        valid_depths = cropped_depth[cropped_depth > 0]
+
+        # Crop around the pixel and get the depth value using the nearest 12.5% of the depth value
+        # TODO: Fix hard code
+        # breakpoint()
+        if valid_depths.size > 0:
+            depth = np.percentile(valid_depths, percentile)
+            object_point = rs2_deproject_pixel_to_point(
+                _intrinsics, image_point, depth * 0.001
+            )
+            return object_point
+        else:
             return None
 
     def plot_pose_cube(self, img, yaw, pitch, roll, tdx=None, tdy=None, size=150.0):
@@ -363,43 +410,32 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
 
         return img
 
-    def estimate_object_points(
-        self,
-        image_point,  # center of the object
-        width,
-        height,
-        depth_image,
-        rgb_cemara_info,
-        percentile=25,
-    ):
-        _intrinsics = intrinsics()
-        _intrinsics.width = rgb_cemara_info.width
-        _intrinsics.height = rgb_cemara_info.height
-        _intrinsics.fx = rgb_cemara_info.k[0]
-        _intrinsics.fy = rgb_cemara_info.k[4]
-        _intrinsics.ppx = rgb_cemara_info.k[2]
-        _intrinsics.ppy = rgb_cemara_info.k[5]
+    def compute_euler_angles_from_rotation_matrices(self, rotation_matrices):
+        batch = rotation_matrices.shape[0]
+        R = rotation_matrices
+        sy = torch.sqrt(R[:, 0, 0] * R[:, 0, 0] + R[:, 1, 0] * R[:, 1, 0])
+        singular = sy < 1e-6
+        singular = singular.float()
 
-        cropped_depth = depth_image[
-            max(0, image_point[1] - height // 2) : min(
-                depth_image.shape[0] - 1, image_point[1] + height // 2 + 1
-            ),
-            max(0, image_point[0] - width // 2) : min(
-                depth_image.shape[1] - 1, image_point[0] + width // 2 + 1
-            ),
-        ]
+        x = torch.atan2(R[:, 2, 1], R[:, 2, 2])
+        y = torch.atan2(-R[:, 2, 0], sy)
+        z = torch.atan2(R[:, 1, 0], R[:, 0, 0])
 
-        # Filter out invalid depth values
-        valid_depths = cropped_depth[cropped_depth > 0]
+        xs = torch.atan2(-R[:, 1, 2], R[:, 1, 1])
+        ys = torch.atan2(-R[:, 2, 0], sy)
+        zs = R[:, 1, 0] * 0
 
-        # Crop around the pixel and get the depth value using the nearest 12.5% of the depth value
-        # TODO: Fix hard code
-        # breakpoint()
-        if valid_depths.size > 0:
-            depth = np.percentile(valid_depths, percentile)
-            object_point = rs2_deproject_pixel_to_point(
-                _intrinsics, image_point, depth * 0.001
+        gpu = rotation_matrices.get_device()
+        if gpu < 0:
+            out_euler = torch.autograd.Variable(torch.zeros(batch, 3)).to(
+                torch.device("cpu")
             )
-            return object_point
         else:
-            return None
+            out_euler = torch.autograd.Variable(torch.zeros(batch, 3)).to(
+                torch.device("cuda:%d" % gpu)
+            )
+        out_euler[:, 0] = x * (1 - singular) + xs * singular
+        out_euler[:, 1] = y * (1 - singular) + ys * singular
+        out_euler[:, 2] = z * (1 - singular) + zs * singular
+
+        return out_euler

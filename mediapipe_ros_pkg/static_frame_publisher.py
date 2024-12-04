@@ -1,11 +1,10 @@
 import sys
 
 import rclpy
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import Quaternion, TransformStamped
 from rclpy.node import Node
+from scipy.spatial.transform import Rotation
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
-
-from mediapipe_ros_pkg.util import quaternion_from_euler
 
 
 def main():
@@ -40,9 +39,23 @@ class StaticFramePublisher(Node):
         t.transform.translation.x = float(transformation[3])
         t.transform.translation.y = float(transformation[4])
         t.transform.translation.z = float(transformation[5])
-        quat = quaternion_from_euler(
-            float(transformation[6]), float(transformation[7]), float(transformation[8])
+
+        rotation = Rotation.from_euler(
+            "xyz",
+            [
+                float(transformation[6]),
+                float(transformation[7]),
+                float(transformation[8]),
+            ],
+            degrees=False,
+        ).as_quat()
+        rotation = Quaternion(
+            x=rotation[0],
+            y=rotation[1],
+            z=rotation[2],
+            w=rotation[3],
         )
-        t.transform.rotation = quat
+
+        t.transform.rotation = rotation
 
         self.tf_static_broadcaster.sendTransform(t)

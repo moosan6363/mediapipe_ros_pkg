@@ -8,7 +8,7 @@ import numpy as np
 import rclpy
 import rclpy.logging
 from cv_bridge import CvBridge
-from geometry_msgs.msg import Point, Pose, PoseStamped, Quaternion
+from geometry_msgs.msg import Point, Pose, PoseStamped
 from mediapipe.framework.formats import landmark_pb2
 from mediapipe.tasks.python import vision
 from sensor_msgs.msg import Image
@@ -264,9 +264,6 @@ class MediapipeHandPosePublisher(RealsenseSubsctiber):
                 (0, 0, 255),
             )
             orientation = direction_vector_to_quaternion(direction_vector)
-            orientation = Quaternion(
-                x=orientation[0], y=orientation[1], z=orientation[2], w=orientation[3]
-            )
             position = Point(
                 x=float(position[0]),
                 y=float(position[1]),
