@@ -28,14 +28,14 @@ from mediapipe_ros_pkg.util import direction_vector_to_quaternion, write_poining
 
 def main(args=None):
     rclpy.init(args=args)
-    camera_name = "front_camera"
+    camera_name = "left_camera"
     mediapipe_gesture_publisher = MediapipeHandPosePublisher(
         node_name="mediapipe_hand_pose_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/mediapipe/hand/annotated_image",
         pointing_vector_topic_name="/mediapipe/hand/pose",
         source_frame_rel=f"{camera_name}_color_optical_frame",
-        target_frame_rel=f"{camera_name}_color_frame",
+        target_frame_rel="world",
         model_path=Path(
             "/home/ws/src/mediapipe_ros_pkg/models/gesture_recognizer.task"
         ),

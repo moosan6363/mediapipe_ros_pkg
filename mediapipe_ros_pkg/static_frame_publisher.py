@@ -1,10 +1,11 @@
 import sys
 
 import rclpy
-from geometry_msgs.msg import Quaternion, TransformStamped
+from geometry_msgs.msg import Quaternion, TransformStamped, Vector3
 from rclpy.node import Node
 from scipy.spatial.transform import Rotation
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
+import numpy as np
 
 
 def main():
@@ -29,33 +30,67 @@ class StaticFramePublisher(Node):
         # Publish static transforms once at startup
         self.make_transforms(transformation)
 
+    # def make_transforms(self, transformation):
+    #     t = TransformStamped()
+
+    #     t.header.stamp = self.get_clock().now().to_msg()
+    #     t.header.frame_id = transformation[1]
+    #     t.child_frame_id = transformation[2]
+
+    #     t.transform.translation.x = float(transformation[3])
+    #     t.transform.translation.y = float(transformation[4])
+    #     t.transform.translation.z = float(transformation[5])
+
+    #     rotation = Rotation.from_euler(
+    #         "xyz",
+    #         [
+    #             float(transformation[6]),
+    #             float(transformation[7]),
+    #             float(transformation[8]),
+    #         ],
+    #         degrees=False,
+    #     ).as_quat()
+    #     rotation = Quaternion(
+    #         x=rotation[0],
+    #         y=rotation[1],
+    #         z=rotation[2],
+    #         w=rotation[3],
+    #     )
+
+    #     t.transform.rotation = rotation
+
+    #     self.tf_static_broadcaster.sendTransform(t)
+
     def make_transforms(self, transformation):
         t = TransformStamped()
 
         t.header.stamp = self.get_clock().now().to_msg()
         t.header.frame_id = transformation[1]
         t.child_frame_id = transformation[2]
-
-        t.transform.translation.x = float(transformation[3])
-        t.transform.translation.y = float(transformation[4])
-        t.transform.translation.z = float(transformation[5])
-
-        rotation = Rotation.from_euler(
-            "xyz",
+        
+        T = np.array(
             [
-                float(transformation[6]),
-                float(transformation[7]),
-                float(transformation[8]),
-            ],
-            degrees=False,
-        ).as_quat()
-        rotation = Quaternion(
+                [float(transformation[3]), float(transformation[4]), float(transformation[5]), float(transformation[6])],
+                [float(transformation[7]), float(transformation[8]), float(transformation[9]), float(transformation[10])],
+                [float(transformation[11]), float(transformation[12]), float(transformation[13]), float(transformation[14])],
+                [0, 0, 0, 1],
+            ]
+        )
+        
+        R = T[:3, :3]
+        rotation = Rotation.from_matrix(R).as_quat()
+        t.transform.rotation = Quaternion(
             x=rotation[0],
             y=rotation[1],
             z=rotation[2],
             w=rotation[3],
         )
-
-        t.transform.rotation = rotation
+        
+        tvec = T[:3, 3]
+        t.transform.translation = Vector3(
+            x=tvec[0],
+            y=tvec[1],
+            z=tvec[2],
+        )
 
         self.tf_static_broadcaster.sendTransform(t)

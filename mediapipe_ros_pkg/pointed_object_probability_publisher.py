@@ -27,7 +27,7 @@ def main(args=None):
         hand_distance_topic_name="/mediapipe/pointed_object/hand_distance",
         head_distance_topic_name="/mediapipe/pointed_object/head_distance",
         marker_array_topic_name="/mediapipe/pointed_object/marker_array",
-        target_frame_rel="front_camera_color_frame",
+        target_frame_rel="world",
         gaussian_sigma=1.0,
     )
     try:

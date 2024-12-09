@@ -24,8 +24,8 @@ launch:
     name: "sixdrepnet_head_pose_publisher"
     namespace: "mediapipe_ros_pkg"
 
-# - node:
-#     pkg: "mediapipe_ros_pkg"
-#     exec: "pointed_object_probability_publisher"
-#     name: "pointed_object_probability_publisher"
-#     namespace: "mediapipe_ros_pkg"
+- node:
+    pkg: "mediapipe_ros_pkg"
+    exec: "pointed_object_probability_publisher"
+    name: "pointed_object_probability_publisher"
+    namespace: "mediapipe_ros_pkg"

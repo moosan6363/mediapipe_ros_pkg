@@ -9,6 +9,10 @@ Panels:
         - /TF1
         - /TF1/Frames1
         - /TF1/Tree1
+        - /TF1/Tree1/world1
+        - /TF1/Tree1/world1/left_camera_link1
+        - /TF1/Tree1/world1/left_camera_link1/left_camera_color_frame1
+        - /TF1/Tree1/world1/top_camera_link1
         - /Image1
         - /Image2
         - /Image3
@@ -16,8 +20,8 @@ Panels:
         - /Pose2
         - /MarkerArray1
         - /MarkerArray1/Topic1
-      Splitter Ratio: 0.5
-    Tree Height: 679
+      Splitter Ratio: 0.45562130212783813
+    Tree Height: 502
   - Class: rviz_common/Selection
     Name: Selection
   - Class: rviz_common/Tool Properties
@@ -62,45 +66,48 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        front_camera_color_frame:
+        left_camera_color_frame:
           Value: true
-        front_camera_color_optical_frame:
+        left_camera_color_optical_frame:
           Value: false
-        front_camera_depth_frame:
+        left_camera_depth_frame:
           Value: false
-        front_camera_depth_optical_frame:
+        left_camera_depth_optical_frame:
           Value: false
-        front_camera_link:
+        left_camera_link:
           Value: false
-        side_camera_color_frame:
+        top_camera_color_frame:
           Value: true
-        side_camera_color_optical_frame:
+        top_camera_color_optical_frame:
           Value: false
-        side_camera_depth_frame:
+        top_camera_depth_frame:
           Value: false
-        side_camera_depth_optical_frame:
+        top_camera_depth_optical_frame:
           Value: false
-        side_camera_link:
+        top_camera_link:
           Value: false
+        world:
+          Value: true
       Marker Scale: 1
       Name: TF
       Show Arrows: true
       Show Axes: true
       Show Names: true
       Tree:
-        front_camera_link:
-          front_camera_color_frame:
-            front_camera_color_optical_frame:
-              {}
-          front_camera_depth_frame:
-            front_camera_depth_optical_frame:
-              {}
-          side_camera_link:
-            side_camera_color_frame:
-              side_camera_color_optical_frame:
+        world:
+          left_camera_link:
+            left_camera_color_frame:
+              left_camera_color_optical_frame:
                 {}
-            side_camera_depth_frame:
-              side_camera_depth_optical_frame:
+            left_camera_depth_frame:
+              left_camera_depth_optical_frame:
+                {}
+          top_camera_link:
+            top_camera_color_frame:
+              top_camera_color_optical_frame:
+                {}
+            top_camera_depth_frame:
+              top_camera_depth_optical_frame:
                 {}
       Update Interval: 0
       Value: true
@@ -196,12 +203,12 @@ Visualization Manager:
         Durability Policy: Volatile
         History Policy: Keep Last
         Reliability Policy: Reliable
-        Value: /mediapipe/objectron/marker_array
+        Value: /mediapipe/pointed_object/marker_array
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: front_camera_color_frame
+    Fixed Frame: world
     Frame Rate: 30
   Name: root
   Tools:
@@ -244,7 +251,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 2.4585201740264893
+      Distance: 3.676393508911133
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -259,20 +266,20 @@ Visualization Manager:
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.47479861974716187
+      Pitch: 0.29979756474494934
       Target Frame: camera_color_frame
       Value: Orbit (rviz)
-      Yaw: 0.008562927134335041
+      Yaw: 0.07653160393238068
     Saved: ~
 Window Geometry:
   Displays:
     collapsed: false
-  Height: 1136
+  Height: 834
   Hide Left Dock: false
   Hide Right Dock: false
   Image:
     collapsed: false
-  QMainWindow State: 000000ff00000000fd0000000300000000000001fd000002e2fc0200000008fb000000100044006900730070006c006100790073010000003b000002e2000000c700fffffffb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000021c000002bbfc0200000002fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000001200530065006c0065006300740069006f006e010000025a000000b20000000000000000000000030000072a00000132fc0100000007fb0000000a0049006d0061006700650100000000000001b20000005a00fffffffb0000000a0049006d00610067006501000001b8000001b10000005a00fffffffb0000000a0049006d006100670065010000036f000001b00000005a00fffffffb0000000a005600690065007700730100000525000002050000010000fffffffb0000000a005600690065007700730100000680000001000000000000000000fb0000000800540069006d00650200000780000003f00000078000000073fb0000000800540069006d0065010000000000000450000000000000000000000527000002e200000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  QMainWindow State: 000000ff00000000fd0000000300000000000001fd00000231fc0200000008fb000000100044006900730070006c006100790073010000003b00000231000000c700fffffffb0000001200530065006c0065006300740069006f006e00000001e10000009b0000005c00fffffffb0000001e0054006f006f006c002000500072006f007000650072007400690065007302000001ed000001df00000185000000a3fb000000120056006900650077007300200054006f006f02000001df000002110000018500000122fb000000200054006f006f006c002000500072006f0070006500720074006900650073003203000002880000011d000002210000017afb0000002000730065006c0065006300740069006f006e00200062007500660066006500720200000138000000aa0000023a00000294fb00000014005700690064006500530074006500720065006f02000000e6000000d2000003ee0000030bfb0000000c004b0069006e0065006300740200000186000001060000030c00000261000000010000021c000002bbfc0200000002fb0000001e0054006f006f006c002000500072006f00700065007200740069006500730100000041000000780000000000000000fb0000001200530065006c0065006300740069006f006e010000025a000000b2000000000000000000000003000004c5000000b5fc0100000007fb0000000a0049006d0061006700650100000000000001230000005a00fffffffb0000000a0049006d0061006700650100000129000000f40000005a00fffffffb0000000a0049006d00610067006501000002230000012d0000005a00fffffffb0000000a0056006900650077007301000003560000016f0000010000fffffffb0000000a005600690065007700730100000680000001000000000000000000fb0000000800540069006d00650200000280000003f00000078000000073fb0000000800540069006d00650100000000000004500000000000000000000002c20000023100000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
   Selection:
     collapsed: false
   Time:
@@ -281,6 +288,6 @@ Window Geometry:
     collapsed: false
   Views:
     collapsed: false
-  Width: 1834
-  X: 86
-  Y: 27
+  Width: 1221
+  X: 996
+  Y: 166

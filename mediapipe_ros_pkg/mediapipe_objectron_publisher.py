@@ -23,14 +23,14 @@ from mediapipe_ros_pkg.realsense_subscriber import (
 
 def main(args=None):
     rclpy.init(args=args)
-    camera_name = "front_camera"
+    camera_name = "left_camera"
     mediapipe_objectron_publisher = MediaPipeObjectronPublisher(
         node_name="mediapipe_objectron_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/mediapipe/objectron/annotated_image",
         objectron_marker_array_topic_name="/mediapipe/objectron/marker_array",
         source_frame_rel=f"{camera_name}_color_optical_frame",
-        target_frame_rel=f"{camera_name}_color_frame",
+        target_frame_rel="world",
     )
     try:
         rclpy.spin(mediapipe_objectron_publisher)

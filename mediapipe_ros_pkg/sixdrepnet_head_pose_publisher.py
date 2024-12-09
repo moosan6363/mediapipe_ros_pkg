@@ -26,14 +26,14 @@ from mediapipe_ros_pkg.realsense_subscriber import RealsenseSubsctiber
 
 def main(args=None):
     rclpy.init(args=args)
-    camera_name = "front_camera"
+    camera_name = "top_camera"
     mediapipe_gesture_publisher = SixDRepnetHeadPosePublisher(
         node_name="sixdrepnet_head_pose_publisher",
         realsense_topic_name=f"/camera/{camera_name}/rgbd",
         annotated_image_topic_name="/sixdrepnet/head/annotated_image",
         head_pose_topic_name="/sixdrepnet/head/pose",
         source_frame_rel=f"{camera_name}_color_optical_frame",
-        target_frame_rel=f"{camera_name}_color_frame",
+        target_frame_rel="world",
         model_path=Path(
             "/home/ws/src/mediapipe_ros_pkg/models/6DRepNet_300W_LP_AFLW2000.pth"
         ),
@@ -216,12 +216,15 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
                     orientation = Rotation.from_euler(
                         "xyz",
                         [
-                            r_pred_deg.numpy()[0],
                             p_pred_deg.numpy()[0],
+                            r_pred_deg.numpy()[0],
                             -y_pred_deg.numpy()[0],
                         ],
                         degrees=True,
                     ).as_quat()
+                    self.get_logger().error(
+                        f"roll {r_pred_deg.numpy()[0]}, pitch {p_pred_deg.numpy()[0]}, yaw {y_pred_deg.numpy()[0]}"
+                    )
                     orientation = Quaternion(
                         x=orientation[0],
                         y=orientation[1],
@@ -253,7 +256,7 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
                     from mediapipe_ros_pkg.util import quaternion_multiply
 
                     rotation = Rotation.from_euler(
-                        "xyz", [0, np.pi, 0], degrees=False
+                        "xyz", [0, 0, np.pi / 2], degrees=False
                     ).as_quat()
                     rotation = Quaternion(
                         x=rotation[0],
