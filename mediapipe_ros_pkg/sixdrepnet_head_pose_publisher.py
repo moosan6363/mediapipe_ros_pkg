@@ -218,13 +218,13 @@ class SixDRepnetHeadPosePublisher(RealsenseSubsctiber):
                         [
                             p_pred_deg.numpy()[0],
                             r_pred_deg.numpy()[0],
-                            -y_pred_deg.numpy()[0],
+                            -y_pred_deg.numpy()[0] + 30,
                         ],
                         degrees=True,
                     ).as_quat()
-                    self.get_logger().error(
-                        f"roll {r_pred_deg.numpy()[0]}, pitch {p_pred_deg.numpy()[0]}, yaw {y_pred_deg.numpy()[0]}"
-                    )
+                    # self.get_logger().info(
+                    #     f"roll {r_pred_deg.numpy()[0]}, pitch {p_pred_deg.numpy()[0]}, yaw {y_pred_deg.numpy()[0]}"
+                    # )
                     orientation = Quaternion(
                         x=orientation[0],
                         y=orientation[1],

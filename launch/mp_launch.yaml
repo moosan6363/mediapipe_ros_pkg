@@ -6,10 +6,16 @@ launch:
     name: "mediapipe_hand_pose_publisher"
     namespace: "mediapipe_ros_pkg"
 
+# - node:
+#     pkg: "mediapipe_ros_pkg"
+#     exec: "mediapipe_objectron_publisher"
+#     name: "mediapipe_objectron_publisher"
+#     namespace: "mediapipe_ros_pkg"
+
 - node:
     pkg: "mediapipe_ros_pkg"
-    exec: "mediapipe_objectron_publisher"
-    name: "mediapipe_objectron_publisher"
+    exec: "yolo_object_detection_publisher"
+    name: "yolo_object_detection_publisher"
     namespace: "mediapipe_ros_pkg"
 
 # - node:

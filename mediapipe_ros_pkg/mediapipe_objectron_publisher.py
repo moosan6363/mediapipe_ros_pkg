@@ -61,58 +61,53 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
         self.source_frame_rel = source_frame_rel
         self.target_frame_rel = target_frame_rel
 
-        self.mp_drawing = mp.solutions.drawing_utils
-        self.mp_objectron = mp.solutions.objectron
         self.bridge = CvBridge()
-        self.CUP_CENTER_IDX = 0
 
-    def callback(self, rgbd_msg):
-        with self.mp_objectron.Objectron(
+        self.CUP_CENTER_IDX = 0
+        self.objectron = mp.solutions.objectron.Objectron(
             static_image_mode=False,
-            max_num_objects=5,
-            min_detection_confidence=0.1,
+            max_num_objects=10,
+            min_detection_confidence=0.3,
             min_tracking_confidence=0.99,
             model_name="Cup",
-            focal_length=(rgbd_msg.rgb_camera_info.k[0], rgbd_msg.rgb_camera_info.k[4]),
+            focal_length=(636.9434204101562, 636.3226928710938),
             principal_point=(
-                rgbd_msg.rgb_camera_info.k[2],
-                rgbd_msg.rgb_camera_info.k[5],
+                632.8662109375,
+                380.9881286621094,
             ),
-            image_size=(rgbd_msg.rgb.width, rgbd_msg.rgb.height),
-        ) as objectron:
-            rgb_image_msg = rgbd_msg.rgb
-            image = self.bridge.imgmsg_to_cv2(rgb_image_msg, "rgb8")
+        )
 
-            # To improve performance, optionally mark the image as not writeable to
-            # pass by reference.
-            results = objectron.process(image)
+    def callback(self, rgbd_msg):
+        rgb_image_msg = rgbd_msg.rgb
+        image = self.bridge.imgmsg_to_cv2(rgb_image_msg, "rgb8")
 
-            # Draw box landmarks.
-            annotated_image = image.copy()
-            if results.detected_objects:
-                markers = []
-                for idx, detected_object in enumerate(results.detected_objects):
-                    self.mp_drawing.draw_landmarks(
-                        annotated_image,
-                        detected_object.landmarks_2d,
-                        self.mp_objectron.BOX_CONNECTIONS,
-                    )
+        # To improve performance, optionally mark the image as not writeable to
+        # pass by reference.
+        detected_objects = self.process(image)
 
-                    marker = self.create_marker(
-                        rgbd_msg, detected_object.landmarks_2d.landmark, idx
-                    )
-                    if marker is not None:
-                        markers.append(marker)
-
-                if len(markers) > 0:
-                    self.objectron_marker_array_publisher.publish(
-                        MarkerArray(markers=markers)
-                    )
-
-            self.annotated_image_publisher.publish(
-                self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
+        # Draw box landmarks.
+        annotated_image = image.copy()
+        markers = []
+        for idx, detected_object in enumerate(detected_objects):
+            mp.solutions.drawing_utils.draw_landmarks(
+                annotated_image,
+                detected_object.landmarks_2d,
+                mp.solutions.objectron.BOX_CONNECTIONS,
             )
-            return
+
+            marker = self.create_marker(
+                rgbd_msg, detected_object.landmarks_2d.landmark, idx
+            )
+            if marker is not None:
+                markers.append(marker)
+
+        if len(markers) > 0:
+            self.objectron_marker_array_publisher.publish(MarkerArray(markers=markers))
+
+        self.annotated_image_publisher.publish(
+            self.bridge.cv2_to_imgmsg(annotated_image, "rgb8")
+        )
+        return
 
     def create_marker(self, rgbd_msg, landmark_2d, id):
         image_points_dict = {}
@@ -189,3 +184,29 @@ class MediaPipeObjectronPublisher(RealsenseSubsctiber):
                 ),
             )
             return marker
+
+    def process(self, rgb_image):
+        cropped_images = [
+            rgb_image[0 : rgb_image.shape[0] // 2, 0 : rgb_image.shape[1] // 2],
+            rgb_image[0 : rgb_image.shape[0] // 2, rgb_image.shape[1] // 2 :],
+            rgb_image[rgb_image.shape[0] // 2 :, 0 : rgb_image.shape[1] // 2],
+            rgb_image[rgb_image.shape[0] // 2 :, rgb_image.shape[1] // 2 :],
+        ]
+        detected_objects = []
+        for i, cropped_image in enumerate(cropped_images):
+            results = self.objectron.process(cropped_image)
+            if results.detected_objects is not None:
+                for detected_object in results.detected_objects:
+                    for idx, landmark in enumerate(
+                        detected_object.landmarks_2d.landmark
+                    ):
+                        x = detected_object.landmarks_2d.landmark[idx].x
+                        y = detected_object.landmarks_2d.landmark[idx].y
+                        detected_object.landmarks_2d.landmark[idx].x = (
+                            x * 0.5 if i % 2 == 0 else x * 0.5 + 0.5
+                        )
+                        detected_object.landmarks_2d.landmark[idx].y = (
+                            y * 0.5 if i < 2 else y * 0.5 + 0.5
+                        )
+                    detected_objects.append(detected_object)
+        return detected_objects

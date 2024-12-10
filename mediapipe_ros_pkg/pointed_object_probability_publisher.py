@@ -5,7 +5,7 @@ import scipy.stats
 import tf2_geometry_msgs
 from geometry_msgs.msg import PoseStamped
 from rclpy.node import Node
-from std_msgs.msg import ColorRGBA, Float32MultiArray
+from std_msgs.msg import ColorRGBA, Empty
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from visualization_msgs.msg import MarkerArray
@@ -14,26 +14,41 @@ from mediapipe_ros_pkg.util import (
     quarterion_to_direction_vector,
 )
 
+from mediapipe_ros_pkg.reduced_logic import ControlLogic
+from rclpy.executors import MultiThreadedExecutor
+
+import traceback as tb
+
 
 def main(args=None):
     rclpy.init(args=args)
+    cl = ControlLogic()
     pointed_object_probability_publisher = PointedObjectProbabilityPublisher(
         node_name="pointed_object_probability_publisher",
         hand_pose_topic_name="/mediapipe/hand/pose",
         head_pose_topic_name="/sixdrepnet/head/pose",
-        objectron_topic_name="/mediapipe/objectron/marker_array",
-        average_pose_topic_name="/mediapipe/pointed_object/average_pose",
-        probability_topic_name="/mediapipe/pointed_object/probability",
-        hand_distance_topic_name="/mediapipe/pointed_object/hand_distance",
-        head_distance_topic_name="/mediapipe/pointed_object/head_distance",
-        marker_array_topic_name="/mediapipe/pointed_object/marker_array",
+        objectron_topic_name="/yolo/object_detection/marker_array",
+        send_action_topic_name="/pointed_object/send_action",
+        marker_array_topic_name="/pointed_object/marker_array",
         target_frame_rel="world",
         gaussian_sigma=1.0,
+        send_pass_action_func=cl.sendPassAction,
     )
+    cl.get_logger().info("Init done.")
     try:
-        rclpy.spin(pointed_object_probability_publisher)
+        mte = MultiThreadedExecutor(4)
+        rclpy.spin(pointed_object_probability_publisher, executor=mte)
+        rclpy.spin(cl, executor=mte)
+        rclpy.spin_once(cl, executor=mte)
+        cl.get_logger().info("ready")
     except KeyboardInterrupt:
-        pointed_object_probability_publisher.destroy_node()
+        print("User requested shutdown.")
+    except BaseException as e:
+        print(f"Some error had occured: {e}")
+        tb.print_exc()
+
+    pointed_object_probability_publisher.destroy_node()
+    cl.destroy_node()
 
 
 class PointedObjectProbabilityPublisher(Node):
@@ -43,13 +58,11 @@ class PointedObjectProbabilityPublisher(Node):
         hand_pose_topic_name,
         head_pose_topic_name,
         objectron_topic_name,
-        average_pose_topic_name,
-        probability_topic_name,
-        hand_distance_topic_name,
-        head_distance_topic_name,
+        send_action_topic_name,
         marker_array_topic_name,
         target_frame_rel,
         gaussian_sigma,
+        send_pass_action_func,
     ):
         super().__init__(node_name)
 
@@ -61,6 +74,10 @@ class PointedObjectProbabilityPublisher(Node):
         # )
         self.objectron_subscription = self.create_subscription(
             MarkerArray, objectron_topic_name, self.objectron_callback, 10
+        )
+
+        self.send_action_subscription = self.create_subscription(
+            Empty, send_action_topic_name, self.send_action_callback, 10
         )
 
         hand_pose_subscriber = message_filters.Subscriber(
@@ -83,18 +100,6 @@ class PointedObjectProbabilityPublisher(Node):
         )
         ts.registerCallback(self.callback)
 
-        self.average_pose_pulisher = self.create_publisher(
-            PoseStamped, average_pose_topic_name, 10
-        )
-        self.probability_publisher = self.create_publisher(
-            Float32MultiArray, probability_topic_name, 10
-        )
-        self.hand_distance_publisher = self.create_publisher(
-            Float32MultiArray, hand_distance_topic_name, 10
-        )
-        self.head_distance_publisher = self.create_publisher(
-            Float32MultiArray, head_distance_topic_name, 10
-        )
         self.marker_array_publisher = self.create_publisher(
             MarkerArray, marker_array_topic_name, 10
         )
@@ -106,6 +111,9 @@ class PointedObjectProbabilityPublisher(Node):
         self.gaussian_sigma = gaussian_sigma
 
         self.objectron_msg = None
+
+        self.send_pass_action_func = send_pass_action_func
+        self.pointed_object = None
 
     def callback(self, hand_pose_msg, head_pose_msg):
         if self.objectron_msg is None:
@@ -145,10 +153,10 @@ class PointedObjectProbabilityPublisher(Node):
         )
         head_pose_orientation = quarterion_to_direction_vector(head_pose.orientation)
 
-        hand_eds = []
-        head_eds = []
-        ucps = []
         markers = []
+        max_ucp = 0
+        max_ucp_object_point = None
+
         for marker in self.objectron_msg.markers:
             try:
                 transform = self.tf_buffer.lookup_transform(
@@ -182,45 +190,37 @@ class PointedObjectProbabilityPublisher(Node):
 
             ucp = ucp_hand * ucp_head
 
-            # print(ed_hand, ed_head)
+            if ucp > max_ucp:
+                max_ucp = ucp
+                max_ucp_object_point = object_point
 
-            hand_eds.append(ed_hand)
-            head_eds.append(ed_head)
-            ucps.append(ucp)
+            # self.get_logger().info(
+            #     f"id: {marker.id}, x: {object_point[0]:.2f}, y: {object_point[1]:.2f}, z: {object_point[2]:.2f}, ucp: {ucp:.2f}, ucp_hand: {ucp_hand:.2f}, ucp_head: {ucp_head:.2f}"
+            # )
+
             marker.color = ColorRGBA(
                 r=1.0 * ucp,
                 b=1.0 * (1 - ucp),
                 a=0.5,
             )
             markers.append(marker)
-        print(ucps)
 
-        hand_ed_msg = Float32MultiArray(data=hand_eds)
-        head_ed_msg = Float32MultiArray(data=head_eds)
-        pd_msg = Float32MultiArray(data=ucps)
-        marker_array = MarkerArray(markers=markers)
-        self.probability_publisher.publish(pd_msg)
-        self.hand_distance_publisher.publish(hand_ed_msg)
-        self.head_distance_publisher.publish(head_ed_msg)
-        self.marker_array_publisher.publish(marker_array)
+        if max_ucp_object_point is not None:
+            self.pointed_object = max_ucp_object_point
+
+        self.marker_array_publisher.publish(MarkerArray(markers=markers))
+
+    def send_action_callback(self, msg):
+        if self.pointed_object is None:
+            self.get_logger().error("No pointed object.")
+        else:
+            self.get_logger().info(
+                f"send action: x: {self.pointed_object[0]:.2f}, y: {self.pointed_object[1]:.2f}, z: {self.pointed_object[2]:.2f}"
+            )
+            self.send_pass_action_func(self.pointed_object, [0.1, 0.1, 0.1])
 
     def objectron_callback(self, objectron_msg):
         self.objectron_msg = objectron_msg
-
-    def get_average_line(self, p1, d1, p2, d2):
-        d1 = self.normalize(d1)
-        d2 = self.normalize(d2)
-        d = self.normalize(d1 + d2)
-
-        # caluculate the nearest point
-        n = np.cross(d1, d2)
-        n = self.normalize(n)
-        t = np.dot(np.cross(p2 - p1, d2), n) / np.dot(n, n)
-        s = np.dot(np.cross(p2 - p1, d1), n) / np.dot(n, n)
-
-        p = (p1 + t * d1 + p2 + s * d2) / 2
-
-        return p, d
 
     def normalize(self, v):
         norm = np.linalg.norm(v)

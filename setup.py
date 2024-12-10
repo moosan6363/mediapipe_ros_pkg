@@ -34,7 +34,9 @@ setup(
             "mediapipe_objectron_publisher = mediapipe_ros_pkg.mediapipe_objectron_publisher:main",
             "mediapipe_head_pose_publisher = mediapipe_ros_pkg.mediapipe_head_pose_publisher:main",
             "sixdrepnet_head_pose_publisher = mediapipe_ros_pkg.sixdrepnet_head_pose_publisher:main",
+            "yolo_object_detection_publisher = mediapipe_ros_pkg.yolo_object_detection_publisher:main",
             "pointed_object_probability_publisher = mediapipe_ros_pkg.pointed_object_probability_publisher:main",
+            "logic = mediapipe_ros_pkg.reduced_logic:main",
         ],
     },
 )
