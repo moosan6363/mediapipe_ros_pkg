@@ -29,7 +29,7 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 
 
-class ControlLogic(Node):
+class ControlLogic:
     ROBOT_ACTION_POINT = "point"
     ROBOT_ACTION_FETCH = "pick_n_pass"
 
@@ -38,18 +38,21 @@ class ControlLogic(Node):
     PCL_GETTER_SERVICE_NAME = "get_masked_point_cloud_rs"
     GRIP_GETTER_SERVICE_NAME = "get_grip_points"
 
-    def __init__(self, node_name="control_logic"):
-        super().__init__(node_name)
-        self.get_logger().info("Initializing ControlLogic node...")
+    def __init__(self, node, node_name="control_logic"):
+        # super().__init__(node_name)
+        self.node = node
+        self.node.get_logger().info("Initializing ControlLogic node...")
 
         mtex_group = MutuallyExclusiveCallbackGroup()
         self.robot_point_client = ActionClient(
-            self, RobotAction, self.ROBOT_ACTION_POINT, callback_group=mtex_group
+            self.node, RobotAction, self.ROBOT_ACTION_POINT, callback_group=mtex_group
         )
         self.robot_pass_client = ActionClient(
-            self, RobotAction, self.ROBOT_ACTION_FETCH, callback_group=mtex_group
+            self.node, RobotAction, self.ROBOT_ACTION_FETCH, callback_group=mtex_group
         )
-        self.get_logger().info("Action clients initialized.")
+        self.node.get_logger().info("Waiting for action servers...")
+        self.robot_pass_client.wait_for_server()
+        self.node.get_logger().info("Action clients initialized.")
 
         self._type_dict = {
             k: v
@@ -72,7 +75,7 @@ class ControlLogic(Node):
             if not k.startswith("_") and type(v) is int
         }
 
-        self.srv_get_grip = self.create_service(
+        self.srv_get_grip = self.node.create_service(
             GetGripPoints,
             self.GRIP_GETTER_SERVICE_NAME,
             self.get_grip,
@@ -81,7 +84,7 @@ class ControlLogic(Node):
 
     def sendPointAction(self, target_xyz, target_size):
         """Point: move to target and back home"""
-        self.get_logger().info("Performing Point action")
+        self.node.get_logger().info("Performing Point action")
         goal_msg = self.composeRobotActionMessage(
             target_xyz=target_xyz,
             target_size=target_size,
@@ -95,7 +98,7 @@ class ControlLogic(Node):
 
     def sendPassAction(self, target_xyz, target_size):
         """Pass (give): move to target, pick, move to user"""
-        self.get_logger().info("Performing Pass action")
+        self.node.get_logger().info("Performing Pass action")
         goal_msg = self.composeRobotActionMessage(
             target_xyz=target_xyz,
             target_size=target_size,
@@ -106,7 +109,9 @@ class ControlLogic(Node):
         self._send_goal_future = self.robot_pass_client.send_goal_async(
             goal_msg, feedback_callback=self.robot_feedback_cb
         )
+        self.node.get_logger().info("Goal sent.")
         self._send_goal_future.add_done_callback(self.robot_response_cb)
+        self.node.get_logger().info("Set callback")
 
     def get_grip(self, request, response):
         response.response_units.unit_type = Units.METERS
@@ -173,7 +178,7 @@ class ControlLogic(Node):
             )
             goal_msg.poses.append(place_pose)
 
-        self.get_logger().info(
+        self.node.get_logger().info(
             f"Composed a goal message for {self.translate_action_type[goal_msg.robot_action_type.type]}."
         )
         return goal_msg
@@ -184,10 +189,10 @@ class ControlLogic(Node):
         """
         self.goal_handle = future.result()
         if not self.goal_handle.accepted:
-            self.get_logger().error("Goal rejected :(")
+            self.node.get_logger().error("Goal rejected :(")
             return
 
-        self.get_logger().info("Goal accepted :)")
+        self.node.get_logger().info("Goal accepted :)")
 
         self._get_result_future = self.goal_handle.get_result_async()
         self._get_result_future.add_done_callback(self.robot_done_cb)
@@ -198,17 +203,17 @@ class ControlLogic(Node):
         """
         result = future.result().result
         if result.done:
-            self.get_logger().info("Action done.")
+            self.node.get_logger().info("Action done.")
         else:
-            self.get_logger().error(
+            self.node.get_logger().error(
                 f"Action failed because: {result.action_result_flag} [{self.translate_result_flag[result.action_result_flag.flag]}]"
             )
-        self.get_logger().info("Robot action done.")
+        self.node.get_logger().info("Robot action done.")
 
     def robot_feedback_cb(self, feedback_msg):
         """This function is called repeatedly during execution of the goal by the robot."""
         feedback = feedback_msg.feedback
-        self.get_logger().info(f"RobotAction feedback: {feedback.status}")
+        self.node.get_logger().info(f"RobotAction feedback: {feedback.status}")
 
     def cancel_current_goal(self, wait=False):
         """Requests cancellation of the current goal.
@@ -216,13 +221,13 @@ class ControlLogic(Node):
         Returns:
             bool: Returns True, if goal can be canceled
         """
-        self.get_logger().info("Trying to cancel the current goal...")
+        self.node.get_logger().info("Trying to cancel the current goal...")
         if self.goal_handle is None:
-            self.get_logger().warn("Goal handle is None, cannot cancel.")
+            self.node.get_logger().warn("Goal handle is None, cannot cancel.")
             return False
         if wait:
             response = self.goal_handle.cancel_goal()
-            self.get_logger().info(f"Response was: {response}")
+            self.node.get_logger().info(f"Response was: {response}")
         else:
             future = self.goal_handle.cancel_goal_async()
             future.add_done_callback(self.robot_canceling_done)
@@ -232,9 +237,9 @@ class ControlLogic(Node):
         """This function is called when the robot cancels or rejects to cancel the current action."""
         cancel_response = future.result()
         if len(cancel_response.goals_canceling) > 0:
-            self.get_logger().info("Goal successfully canceled")
+            self.node.get_logger().info("Goal successfully canceled")
         else:
-            self.get_logger().info("Goal failed to cancel")
+            self.node.get_logger().info("Goal failed to cancel")
 
 
 def main():

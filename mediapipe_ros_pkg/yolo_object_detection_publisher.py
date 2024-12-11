@@ -33,7 +33,7 @@ def main(args=None):
         objectron_marker_array_topic_name="/yolo/object_detection/marker_array",
         source_frame_rel=f"{camera_name}_color_optical_frame",
         target_frame_rel="world",
-        cup_radius=0.046,
+        cup_radius=0.06,
         cup_height=0.08,
     )
     try:
@@ -134,7 +134,7 @@ class YOLOObjectDetectionPublisher(RealsenseSubsctiber):
                 object_point = (
                     object_point[0],
                     object_point[1],
-                    object_point[2] + self.cup_radius,
+                    object_point[2] + self.cup_radius - 0.04,
                 )
 
                 point_stamped = PointStamped(

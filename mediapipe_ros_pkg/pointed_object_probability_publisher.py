@@ -9,6 +9,7 @@ from std_msgs.msg import ColorRGBA, Empty
 from tf2_ros.buffer import Buffer
 from tf2_ros.transform_listener import TransformListener
 from visualization_msgs.msg import MarkerArray
+import os
 
 from mediapipe_ros_pkg.util import (
     quarterion_to_direction_vector,
@@ -22,7 +23,6 @@ import traceback as tb
 
 def main(args=None):
     rclpy.init(args=args)
-    cl = ControlLogic()
     pointed_object_probability_publisher = PointedObjectProbabilityPublisher(
         node_name="pointed_object_probability_publisher",
         hand_pose_topic_name="/mediapipe/hand/pose",
@@ -32,15 +32,19 @@ def main(args=None):
         marker_array_topic_name="/pointed_object/marker_array",
         target_frame_rel="world",
         gaussian_sigma=1.0,
-        send_pass_action_func=cl.sendPassAction,
     )
-    cl.get_logger().info("Init done.")
+    pointed_object_probability_publisher.get_logger().info("-----------------")
+    pointed_object_probability_publisher.get_logger().info(os.environ["ROS_DOMAIN_ID"])
+    cl = ControlLogic(node=pointed_object_probability_publisher)
+    pointed_object_probability_publisher.register_pass_callback(cl.sendPassAction)
+    cl.node.get_logger().info("Init done.")
     try:
         mte = MultiThreadedExecutor(4)
+        # cl.sendPassAction([0.5, 0.0, 0.02], [0.1, 0.1, 0.1])
         rclpy.spin(pointed_object_probability_publisher, executor=mte)
-        rclpy.spin(cl, executor=mte)
-        rclpy.spin_once(cl, executor=mte)
-        cl.get_logger().info("ready")
+        # rclpy.spin(cl, executor=mte)
+        # rclpy.spin_once(cl, executor=mte)
+        cl.node.get_logger().info("ready")
     except KeyboardInterrupt:
         print("User requested shutdown.")
     except BaseException as e:
@@ -48,7 +52,7 @@ def main(args=None):
         tb.print_exc()
 
     pointed_object_probability_publisher.destroy_node()
-    cl.destroy_node()
+    # cl.destroy_node()
 
 
 class PointedObjectProbabilityPublisher(Node):
@@ -62,7 +66,6 @@ class PointedObjectProbabilityPublisher(Node):
         marker_array_topic_name,
         target_frame_rel,
         gaussian_sigma,
-        send_pass_action_func,
     ):
         super().__init__(node_name)
 
@@ -112,8 +115,10 @@ class PointedObjectProbabilityPublisher(Node):
 
         self.objectron_msg = None
 
+        self.object_points = []
+
+    def register_pass_callback(self, send_pass_action_func):
         self.send_pass_action_func = send_pass_action_func
-        self.pointed_object = None
 
     def callback(self, hand_pose_msg, head_pose_msg):
         if self.objectron_msg is None:
@@ -154,8 +159,8 @@ class PointedObjectProbabilityPublisher(Node):
         head_pose_orientation = quarterion_to_direction_vector(head_pose.orientation)
 
         markers = []
-        max_ucp = 0
-        max_ucp_object_point = None
+
+        self.object_points = []
 
         for marker in self.objectron_msg.markers:
             try:
@@ -190,9 +195,13 @@ class PointedObjectProbabilityPublisher(Node):
 
             ucp = ucp_hand * ucp_head
 
-            if ucp > max_ucp:
-                max_ucp = ucp
-                max_ucp_object_point = object_point
+            self.object_points.append(
+                {
+                    "id": marker.id,
+                    "object_point": object_point,
+                    "ucp": ucp,
+                }
+            )
 
             # self.get_logger().info(
             #     f"id: {marker.id}, x: {object_point[0]:.2f}, y: {object_point[1]:.2f}, z: {object_point[2]:.2f}, ucp: {ucp:.2f}, ucp_hand: {ucp_hand:.2f}, ucp_head: {ucp_head:.2f}"
@@ -205,19 +214,23 @@ class PointedObjectProbabilityPublisher(Node):
             )
             markers.append(marker)
 
-        if max_ucp_object_point is not None:
-            self.pointed_object = max_ucp_object_point
-
         self.marker_array_publisher.publish(MarkerArray(markers=markers))
 
     def send_action_callback(self, msg):
-        if self.pointed_object is None:
+        if self.object_points is None:
             self.get_logger().error("No pointed object.")
         else:
+            for object_point in self.object_points:
+                self.get_logger().info(
+                    f"id: {object_point['id']}, ucp: {object_point['ucp']:.2f}, x: {object_point['object_point'][0]:.2f}, y: {object_point['object_point'][1]:.2f}, z: {object_point['object_point'][2]:.2f}"
+                )
+            max_ucp_object = max(self.object_points, key=lambda x: x["ucp"])
             self.get_logger().info(
-                f"send action: x: {self.pointed_object[0]:.2f}, y: {self.pointed_object[1]:.2f}, z: {self.pointed_object[2]:.2f}"
+                f"send action: x: {max_ucp_object['object_point'][0]:.2f}, y: {max_ucp_object['object_point'][1]:.2f}, z: {max_ucp_object['object_point'][2]:.2f}"
             )
-            self.send_pass_action_func(self.pointed_object, [0.1, 0.1, 0.1])
+            self.send_pass_action_func(max_ucp_object["object_point"], [0.1, 0.1, 0.1])
+
+    # def send_action_callback(self, msg):
 
     def objectron_callback(self, objectron_msg):
         self.objectron_msg = objectron_msg
